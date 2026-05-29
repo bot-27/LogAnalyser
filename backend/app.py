@@ -70,6 +70,7 @@ kg_manager = KnowledgeGraphManager(
 log_analysis_prompt_text = """
 You are a senior site reliability engineer.
 
+{system_section}
 Analyze the following application logs.
 
 1. Identify the main errors or failures.
@@ -102,8 +103,8 @@ def split_logs(log_text: str):
 # ---------------------------------------------------------------------------
 # Log Analysis (enhanced with knowledge graph context)
 # ---------------------------------------------------------------------------
-async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = True):
-    """Analyze logs by splitting and processing each chunk, with KG context."""
+async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = True, system_info: str | None = None):
+    """Analyze logs by splitting and processing each chunk, with KG context and optional system info."""
     selected_model = model or DEFAULT_MODEL
 
     llm = ChatOllama(
@@ -130,6 +131,11 @@ async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = T
     else:
         prior_section = ""
 
+    if system_info:
+        system_section = f"System Information Context:\n{system_info}\n\n"
+    else:
+        system_section = ""
+
     chunks = split_logs(log_text)
     logger.info("Split logs into %d chunk(s), using model '%s'", len(chunks), selected_model)
 
@@ -140,6 +146,7 @@ async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = T
         formatted_prompt = log_analysis_prompt_text.format(
             log_data=chunk,
             prior_knowledge=prior_section,
+            system_section=system_section,
         )
         result = await llm.ainvoke(formatted_prompt)
         combined_analysis.append(result.content)
@@ -149,11 +156,12 @@ async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = T
     return full_analysis, context_used
 
 
-def preprocess_log_text(log_text: str, max_chars: int = 100000) -> tuple[str, bool, str]:
+def preprocess_log_text(log_text: str, max_chars: int = 30000) -> tuple[str, bool, str]:
     """
     Preprocess log text. If it exceeds max_chars, filter it to keep only lines with
     keywords (and their immediate context) to avoid overloading the LLM and causing timeouts.
     """
+    import re
     orig_len = len(log_text)
     if orig_len <= max_chars:
         return log_text, False, f"Original file ({orig_len / 1024:.1f} KB)"
@@ -161,13 +169,15 @@ def preprocess_log_text(log_text: str, max_chars: int = 100000) -> tuple[str, bo
     lines = log_text.splitlines()
     num_lines = len(lines)
     
-    # Identify lines with error-related keywords
-    keywords = {"error", "fail", "exception", "critical", "fatal", "warn", "severe", "stacktrace", "traceback", "caused by"}
+    # Compile a fast case-insensitive regex for error-related keywords
+    error_pattern = re.compile(
+        r"error|fail|exception|critical|fatal|warn|severe|stacktrace|traceback|caused by",
+        re.IGNORECASE
+    )
     matched_indices = set()
     
     for idx, line in enumerate(lines):
-        line_lower = line.lower()
-        if any(kw in line_lower for kw in keywords):
+        if error_pattern.search(line):
             # Add context: 2 lines before and 2 lines after
             start = max(0, idx - 2)
             end = min(num_lines, idx + 3)
@@ -218,6 +228,7 @@ async def root():
 @app.post("/analyze")
 async def analyze_log_file(
     file: UploadFile = File(...),
+    system_info: UploadFile | None = File(None),
     model: str | None = None,
     use_kg: bool = True,
 ):
@@ -263,12 +274,32 @@ async def analyze_log_file(
             log_text.count("\n") + 1,
         )
 
+        # Handle optional system info file
+        system_info_text = None
+        if system_info is not None and system_info.filename:
+            try:
+                sys_info_content = await system_info.read()
+                if len(sys_info_content) > 5 * 1024 * 1024:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "System info file too large. Maximum allowed: 5 MB."},
+                    )
+                if sys_info_content.strip():
+                    system_info_text = sys_info_content.decode("utf-8", errors="ignore")
+                    logger.info(
+                        "Received optional system info file '%s' (%d bytes)",
+                        system_info.filename,
+                        len(sys_info_content)
+                    )
+            except Exception as sys_err:
+                logger.warning("Failed to read optional system info file: %s", sys_err)
+
         # Preprocess / filter large logs to prevent timeouts and LLM thrashing
         processed_text, was_filtered, filter_status = preprocess_log_text(log_text)
         if was_filtered:
             logger.info("Log pre-filtering: %s", filter_status)
 
-        insights, context_used = await analyze_logs(processed_text, model, use_kg)
+        insights, context_used = await analyze_logs(processed_text, model, use_kg, system_info=system_info_text)
 
         if was_filtered:
             filter_note = (
@@ -278,6 +309,13 @@ async def analyze_log_file(
                 f"of relevant error, warning, and stacktrace contexts to prevent timeouts and optimize analysis.\n\n"
             )
             insights = filter_note + insights
+
+        if system_info_text:
+            system_note = (
+                f"> [!TIP]\n"
+                f"> **System Context Provided**: Analysis is informed by environment specifications from `{system_info.filename}`.\n\n"
+            )
+            insights = system_note + insights
 
         # Extract entities from analysis and add to knowledge graph
         kg_update = {}

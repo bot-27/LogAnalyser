@@ -804,11 +804,26 @@
                 </div>
 
                 <!-- KG Toggle Checkbox -->
-                <div class="config-row" style="margin-top: -12px; margin-bottom: 24px;">
+                <div class="config-row" style="margin-top: -12px; margin-bottom: 16px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 0.85rem; color: var(--text-secondary);">
                         <input type="checkbox" id="useKgCheckbox" checked style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;">
                         <span>Use prior context from Knowledge Graph during analysis</span>
                     </label>
+                </div>
+
+                <!-- System Info File (Optional) -->
+                <div class="config-row" style="margin-top: -12px; margin-bottom: 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;">
+                    <label style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 500; display: flex; align-items: center; gap: 6px;">
+                        📋 System Info File (Optional)
+                    </label>
+                    <div style="display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 4px;">
+                        <input type="file" id="systemInfoInput" accept=".txt,.log,.json,.yaml,.yml" style="display: none;">
+                        <button class="btn-sm" id="btnBrowseSystemInfo" type="button" style="padding: 6px 12px; font-size: 0.8rem; background: rgba(255,255,255,0.03); border: 1px dashed var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; transition: var(--transition);">
+                            Select System Info...
+                        </button>
+                        <span id="systemInfoStatus" style="font-size: 0.8rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%;">No file selected</span>
+                        <span id="btnRemoveSystemInfo" style="cursor: pointer; color: var(--text-muted); display: none; font-weight: bold; font-size: 0.95rem; padding: 0 4px;" onmouseover="this.style.color='var(--error)'" onmouseout="this.style.color='var(--text-muted)'" title="Remove system info file">✕</span>
+                    </div>
                 </div>
 
                 <!-- Drop zone -->
@@ -846,6 +861,9 @@
                 <div class="spinner"></div>
                 <div class="loading-text">Analyzing your logs…</div>
                 <div class="loading-detail" id="loadingDetail">Sending to local LLM</div>
+                <button class="btn-cancel" id="cancelBtn" style="margin-top: 16px; border: 1px solid rgba(248, 113, 113, 0.4); color: var(--error); background: rgba(248, 113, 113, 0.05); font-weight: 500; font-size: 0.85rem; padding: 8px 16px; display: flex; align-items: center; gap: 8px; transition: var(--transition);" onmouseover="this.style.background='rgba(248, 113, 113, 0.15)'" onmouseout="this.style.background='rgba(248, 113, 113, 0.05)'">
+                    🛑 Stop Analysis
+                </button>
             </div>
 
             <!-- Results -->
@@ -924,12 +942,18 @@
         const errorBox = document.getElementById('errorBox');
         const loadingSection = document.getElementById('loadingSection');
         const loadingDetail = document.getElementById('loadingDetail');
+        const cancelBtn = document.getElementById('cancelBtn');
         const resultsCard = document.getElementById('resultsCard');
         const resultsContent = document.getElementById('resultsContent');
         const resultsMeta = document.getElementById('resultsMeta');
         const modelSelect = document.getElementById('modelSelect');
         const statusDot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
+
+        const systemInfoInput = document.getElementById('systemInfoInput');
+        const btnBrowseSystemInfo = document.getElementById('btnBrowseSystemInfo');
+        const systemInfoStatus = document.getElementById('systemInfoStatus');
+        const btnRemoveSystemInfo = document.getElementById('btnRemoveSystemInfo');
 
         const kgCard = document.getElementById('kgCard');
         const kgStats = document.getElementById('kgStats');
@@ -947,6 +971,8 @@
 
         let selectedFiles = []; // Holds list of File objects
         let maxFileSizeMB = 10; // Dynamic default limit, loaded from server
+        let analysisAbortController = null;
+        let systemInfoFile = null;
 
         // =============================================
         // Tabs Switching Logic
@@ -1140,9 +1166,42 @@
         }
 
         // =============================================
+        // System Info File Selection
+        // =============================================
+        btnBrowseSystemInfo.addEventListener('click', () => systemInfoInput.click());
+
+        systemInfoInput.addEventListener('change', () => {
+            if (systemInfoInput.files.length > 0) {
+                const file = systemInfoInput.files[0];
+                if (file.size > 5 * 1024 * 1024) {
+                    showError("System info file too large (Max: 5 MB).");
+                    systemInfoInput.value = '';
+                    return;
+                }
+                systemInfoFile = file;
+                systemInfoStatus.textContent = `${file.name} (${formatBytes(file.size)})`;
+                systemInfoStatus.style.color = 'var(--text-primary)';
+                btnRemoveSystemInfo.style.display = 'inline';
+            }
+        });
+
+        btnRemoveSystemInfo.addEventListener('click', () => {
+            systemInfoFile = null;
+            systemInfoInput.value = '';
+            systemInfoStatus.textContent = 'No file selected';
+            systemInfoStatus.style.color = 'var(--text-muted)';
+            btnRemoveSystemInfo.style.display = 'none';
+        });
+
+        // =============================================
         // Analysis
         // =============================================
         analyzeBtn.addEventListener('click', uploadAndAnalyze);
+        cancelBtn.addEventListener('click', () => {
+            if (analysisAbortController) {
+                analysisAbortController.abort();
+            }
+        });
 
         function createAccordionItem(fileName, analysisText, elapsedTime, contextUsed) {
             const item = document.createElement('div');
@@ -1205,6 +1264,9 @@
             let successCount = 0;
             let errorCount = 0;
 
+            analysisAbortController = new AbortController();
+            const { signal } = analysisAbortController;
+
             try {
                 for (let i = 0; i < selectedFiles.length; i++) {
                     const file = selectedFiles[i];
@@ -1215,6 +1277,9 @@
                     try {
                         const formData = new FormData();
                         formData.append('file', file);
+                        if (systemInfoFile) {
+                            formData.append('system_info', systemInfoFile);
+                        }
 
                         let url = `/analyze?use_kg=${useKg}`;
                         if (modelVal) {
@@ -1224,6 +1289,7 @@
                         const response = await fetch(url, {
                             method: 'POST',
                             body: formData,
+                            signal: signal
                         });
 
                         const data = await response.json();
@@ -1244,6 +1310,9 @@
                         resultsContent.appendChild(accordionItem);
 
                     } catch (fileErr) {
+                        if (fileErr.name === 'AbortError') {
+                            throw fileErr; // Re-throw to abort batch analysis entirely
+                        }
                         errorCount++;
                         const errorMsg = `Error analyzing file: ${fileErr.message}`;
                         const errorItem = createAccordionItem(
@@ -1264,10 +1333,21 @@
                 fetchKnowledgeGraph();
 
             } catch (err) {
-                showError(err.message);
+                if (err.name === 'AbortError') {
+                    showError("Analysis stopped by user.");
+                    if (successCount > 0 || errorCount > 0) {
+                        const totalElapsed = ((Date.now() - totalStartTime) / 1000).toFixed(1);
+                        resultsMeta.textContent = `${totalElapsed}s · Stopped by user · ${successCount} ok${errorCount > 0 ? `, ${errorCount} err` : ''}`;
+                        resultsCard.classList.add('show');
+                        fetchKnowledgeGraph();
+                    }
+                } else {
+                    showError(err.message);
+                }
             } finally {
                 loadingSection.classList.remove('show');
                 analyzeBtn.disabled = false;
+                analysisAbortController = null;
             }
         }
 
