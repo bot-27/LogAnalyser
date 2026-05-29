@@ -1329,8 +1329,10 @@
                 resultsMeta.textContent = `${totalElapsed}s · ${modelVal || 'default'} · ${successCount} ok${errorCount > 0 ? `, ${errorCount} err` : ''}`;
                 resultsCard.classList.add('show');
                 
-                // Refresh Graph
+                // Refresh Graph immediately and with polling delays to capture background task completion
                 fetchKnowledgeGraph();
+                setTimeout(fetchKnowledgeGraph, 5000);
+                setTimeout(fetchKnowledgeGraph, 15000);
 
             } catch (err) {
                 if (err.name === 'AbortError') {
@@ -1340,6 +1342,8 @@
                         resultsMeta.textContent = `${totalElapsed}s · Stopped by user · ${successCount} ok${errorCount > 0 ? `, ${errorCount} err` : ''}`;
                         resultsCard.classList.add('show');
                         fetchKnowledgeGraph();
+                        setTimeout(fetchKnowledgeGraph, 5000);
+                        setTimeout(fetchKnowledgeGraph, 15000);
                     }
                 } else {
                     showError(err.message);

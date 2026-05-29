@@ -15,7 +15,8 @@ import logging
 import os
 import httpx
 
-from fastapi import FastAPI, UploadFile, File, Body
+# pyrefly: ignore [missing-import]
+from fastapi import FastAPI, UploadFile, File, Body, BackgroundTasks
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -94,8 +95,8 @@ Avoid jargon where possible.
 def split_logs(log_text: str):
     """Split log text into manageable chunks."""
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=2000,
-        chunk_overlap=200,
+        chunk_size=4000,
+        chunk_overlap=400,
     )
     return splitter.split_text(log_text)
 
@@ -156,7 +157,7 @@ async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = T
     return full_analysis, context_used
 
 
-def preprocess_log_text(log_text: str, max_chars: int = 30000) -> tuple[str, bool, str]:
+def preprocess_log_text(log_text: str, max_chars: int = 10000) -> tuple[str, bool, str]:
     """
     Preprocess log text. If it exceeds max_chars, filter it to keep only lines with
     keywords (and their immediate context) to avoid overloading the LLM and causing timeouts.
@@ -225,8 +226,21 @@ async def root():
         return f.read()
 
 
+async def run_kg_update_background(insights: str, filename: str, model: str | None):
+    """Asynchronously update the knowledge graph in the background."""
+    try:
+        await kg_manager.add_analysis_entities(
+            analysis_text=insights,
+            filename=filename,
+            model=model,
+        )
+    except Exception as kg_err:
+        logger.warning("Knowledge graph background update failed: %s", kg_err)
+
+
 @app.post("/analyze")
 async def analyze_log_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     system_info: UploadFile | None = File(None),
     model: str | None = None,
@@ -317,22 +331,19 @@ async def analyze_log_file(
             )
             insights = system_note + insights
 
-        # Extract entities from analysis and add to knowledge graph
-        kg_update = {}
-        try:
-            kg_update = await kg_manager.add_analysis_entities(
-                analysis_text=insights,
-                filename=filename,
-                model=model,
-            )
-        except Exception as kg_err:
-            logger.warning("Knowledge graph update failed (non-fatal): %s", kg_err)
+        # Extract entities from analysis and add to knowledge graph asynchronously in background
+        background_tasks.add_task(
+            run_kg_update_background,
+            insights=insights,
+            filename=filename,
+            model=model,
+        )
 
         return {
             "analysis": insights,
             "knowledge_graph": {
                 "context_used": context_used,
-                "update": kg_update,
+                "update": {"status": "queued"},
                 "summary": kg_manager.get_graph_summary(),
             },
         }
