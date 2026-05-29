@@ -416,6 +416,62 @@ async def add_insight(
         )
 
 
+@app.post("/knowledge-graph/explain")
+async def explain_knowledge_graph(
+    body: dict = Body(default={}),
+):
+    """Generate an AI SRE explanation of the knowledge graph contents."""
+    model = body.get("model")
+    try:
+        # Format the graph data into a text description
+        graph_data = kg_manager.get_graph_data()
+        nodes = graph_data.get("nodes", [])
+        edges = graph_data.get("edges", [])
+        
+        if not nodes:
+            return {"explanation": "The knowledge graph is currently empty. Analyze some logs first to populate it!"}
+            
+        nodes_str = "\n".join([
+            f"- Node '{n['id']}' ({n.get('type', 'unknown')}): {n.get('description', 'No description')} (Seen {n.get('observation_count', 1)} times)"
+            for n in nodes
+        ])
+        
+        edges_str = "\n".join([
+            f"- Relationship: '{e['source']}' {e.get('type', 'relates to')} -> '{e['target']}'"
+            for e in edges
+        ])
+        
+        prompt = (
+            "You are a principal site reliability engineer.\n\n"
+            "Analyze the following Knowledge Graph which represents the collective state of errors, services, root causes, and fixes extracted from application logs:\n\n"
+            "### Nodes (Entities):\n"
+            f"{nodes_str}\n\n"
+            "### Edges (Relationships):\n"
+            f"{edges_str}\n\n"
+            "Provide a high-level, structured SRE summary explaining:\n"
+            "1. What is the overall state of the system based on this knowledge?\n"
+            "2. What are the key recurring issues or failures, and their known root causes?\n"
+            "3. What are the best recommended actions or fixes discovered so far?\n\n"
+            "Respond in clear markdown with headers (##). Be concise and professional."
+        )
+        
+        llm = ChatOllama(
+            model=model or DEFAULT_MODEL,
+            temperature=0.3,
+            base_url=OLLAMA_BASE_URL,
+        )
+        
+        result = await llm.ainvoke(prompt)
+        return {"explanation": result.content}
+        
+    except Exception as e:
+        logger.exception("Error explaining knowledge graph")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to generate graph explanation: {str(e)}"},
+        )
+
+
 @app.delete("/knowledge-graph")
 async def clear_knowledge_graph():
     """Clear the knowledge graph (creates backup first)."""

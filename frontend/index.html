@@ -883,6 +883,7 @@
                 <div class="kg-header">
                     <div class="kg-title">🌐 Knowledge Graph</div>
                     <div class="kg-controls">
+                        <button id="btnExplainKg" class="btn-sm" style="border-color: var(--accent); color: var(--accent-bright); background: rgba(99, 102, 241, 0.05); font-weight: 500;">📘 Explain Graph</button>
                         <button id="btnRestructure" class="btn-sm">🔄 Restructure</button>
                         <button id="btnInsight" class="btn-sm">💡 Add Insight</button>
                         <button id="btnClearKg" class="btn-sm btn-danger">🗑️ Clear</button>
@@ -893,11 +894,50 @@
                     <svg id="kgCanvas"></svg>
                     <div class="kg-tooltip" id="kgTooltip"></div>
                 </div>
+
+                <!-- Searchable Node Directory -->
+                <div style="margin-top: 24px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+                        <h3 style="font-size: 1.05rem; font-weight: 600; display: flex; align-items: center; gap: 8px; margin: 0;">
+                            📋 Node Directory
+                        </h3>
+                        <input type="text" id="kgSearchInput" placeholder="🔍 Search nodes by ID, label, or description..." style="padding: 6px 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.8rem; width: 250px; outline: none; transition: var(--transition);" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border-color)'">
+                    </div>
+                    <div style="overflow-x: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.82rem;">
+                            <thead>
+                                <tr style="background: rgba(255, 255, 255, 0.02); border-bottom: 1px solid var(--border-color);">
+                                    <th style="padding: 10px 14px; font-weight: 600; color: var(--text-secondary); width: 25%;">Node</th>
+                                    <th style="padding: 10px 14px; font-weight: 600; color: var(--text-secondary); width: 15%;">Type</th>
+                                    <th style="padding: 10px 14px; font-weight: 600; color: var(--text-secondary); width: 50%;">Description</th>
+                                    <th style="padding: 10px 14px; font-weight: 600; color: var(--text-secondary); width: 10%; text-align: right;">Seen</th>
+                                </tr>
+                            </thead>
+                            <tbody id="kgNodeTableBody">
+                                <tr>
+                                    <td colspan="4" style="padding: 16px; text-align: center; color: var(--text-muted);">No nodes available</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
 
         <!-- Modals -->
         <div class="modal-overlay" id="modalOverlay"></div>
+        <div class="modal" id="explainModal" style="max-width: 650px; width: 90%; max-height: 80vh; overflow-y: auto;">
+            <h3 style="display: flex; align-items: center; gap: 8px;">📘 AI SRE Graph Explanation</h3>
+            <div id="explainModalContent" style="font-size: 0.9rem; line-height: 1.5; color: var(--text-primary); margin-bottom: 20px; max-height: 50vh; overflow-y: auto; padding-right: 8px;">
+                <div style="display: flex; flex-direction: column; align-items: center; padding: 20px; gap: 12px;">
+                    <div class="spinner" style="width: 32px; height: 32px;"></div>
+                    <div style="color: var(--text-muted);">Generating SRE explanation...</div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button id="btnCloseExplain" class="btn-cancel">Close</button>
+            </div>
+        </div>
         <div class="modal" id="insightModal">
             <h3>Add Developer Insight</h3>
             <textarea id="insightText" placeholder="Enter your insight here... e.g. Database connections spike on Mondays" rows="4"></textarea>
@@ -960,6 +1000,12 @@
         const btnRestructure = document.getElementById('btnRestructure');
         const btnInsight = document.getElementById('btnInsight');
         const btnClearKg = document.getElementById('btnClearKg');
+        const btnExplainKg = document.getElementById('btnExplainKg');
+        const explainModal = document.getElementById('explainModal');
+        const explainModalContent = document.getElementById('explainModalContent');
+        const btnCloseExplain = document.getElementById('btnCloseExplain');
+        const kgSearchInput = document.getElementById('kgSearchInput');
+        const kgNodeTableBody = document.getElementById('kgNodeTableBody');
         
         const modalOverlay = document.getElementById('modalOverlay');
         const insightModal = document.getElementById('insightModal');
@@ -973,6 +1019,7 @@
         let maxFileSizeMB = 10; // Dynamic default limit, loaded from server
         let analysisAbortController = null;
         let systemInfoFile = null;
+        let currentGraphNodes = [];
 
         // =============================================
         // Tabs Switching Logic
@@ -1396,6 +1443,8 @@
                             <p style="color: var(--text-muted); margin-top: 8px;">Upload and analyze log files in the first tab to automatically extract entities and populate this graph.</p>
                         </div>
                     `;
+                    currentGraphNodes = [];
+                    renderNodeDirectory(currentGraphNodes);
                     return;
                 }
                 
@@ -1410,11 +1459,61 @@
                 if (!dataResp.ok) return;
                 const graphData = await dataResp.json();
                 
+                currentGraphNodes = graphData.nodes || [];
+                renderNodeDirectory(currentGraphNodes);
                 renderGraph(graphData);
             } catch (e) {
                 console.error("Failed to load knowledge graph", e);
             }
         }
+
+        function renderNodeDirectory(nodes) {
+            const query = kgSearchInput.value.toLowerCase().trim();
+            const filtered = nodes.filter(n => {
+                const id = n.id.toLowerCase();
+                const label = (n.label || '').toLowerCase();
+                const desc = (n.description || '').toLowerCase();
+                const type = (n.type || '').toLowerCase();
+                return id.includes(query) || label.includes(query) || desc.includes(query) || type.includes(query);
+            });
+
+            kgNodeTableBody.innerHTML = '';
+            if (filtered.length === 0) {
+                kgNodeTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="4" style="padding: 16px; text-align: center; color: var(--text-muted);">No nodes found</td>
+                    </tr>
+                `;
+                return;
+            }
+
+            filtered.forEach(n => {
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid var(--border-color)';
+                tr.style.transition = 'background 0.2s';
+                
+                tr.onmouseover = () => tr.style.background = 'rgba(255, 255, 255, 0.01)';
+                tr.onmouseout = () => tr.style.background = 'transparent';
+
+                const typeColor = nodeColors[n.type] || nodeColors.unknown;
+                
+                tr.innerHTML = `
+                    <td style="padding: 10px 14px; font-weight: 500; color: var(--text-primary); font-family: 'JetBrains Mono', monospace;" title="${n.id}">${n.label || n.id}</td>
+                    <td style="padding: 10px 14px;">
+                        <span style="display: inline-block; padding: 2px 8px; font-size: 0.72rem; font-weight: 600; border-radius: 12px; background: ${typeColor}15; color: ${typeColor}; border: 1px solid ${typeColor}30; text-transform: uppercase;">
+                            ${n.type || 'unknown'}
+                        </span>
+                    </td>
+                    <td style="padding: 10px 14px; color: var(--text-secondary); line-height: 1.4;">${n.description || '—'}</td>
+                    <td style="padding: 10px 14px; color: var(--text-muted); text-align: right; font-family: 'JetBrains Mono', monospace;">${n.observation_count || 1}</td>
+                `;
+                kgNodeTableBody.appendChild(tr);
+            });
+        }
+
+        kgSearchInput.addEventListener('input', () => {
+            renderNodeDirectory(currentGraphNodes);
+        });
 
         function renderGraph(graphData) {
             const container = document.getElementById('kgContainer');
@@ -1523,7 +1622,38 @@
             modalOverlay.classList.remove('show');
             insightModal.classList.remove('show');
             restructureModal.classList.remove('show');
+            explainModal.classList.remove('show');
         }
+
+        btnExplainKg.addEventListener('click', async () => {
+            showModal(explainModal);
+            explainModalContent.innerHTML = `
+                <div style="display: flex; flex-direction: column; align-items: center; padding: 30px; gap: 12px;">
+                    <div class="spinner" style="width: 32px; height: 32px;"></div>
+                    <div style="color: var(--text-muted);">Generating SRE explanation... (takes ~15s)</div>
+                </div>
+            `;
+            
+            try {
+                const resp = await fetch('/knowledge-graph/explain', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ model: modelSelect.value })
+                });
+                
+                const data = await resp.json();
+                if (resp.ok) {
+                    const htmlContent = typeof marked !== 'undefined' ? marked.parse(data.explanation) : data.explanation;
+                    explainModalContent.innerHTML = `<div class="results-content">${htmlContent}</div>`;
+                } else {
+                    explainModalContent.innerHTML = `<div style="color: var(--error); padding: 10px;">❌ Error: ${data.error || 'Failed to explain graph'}</div>`;
+                }
+            } catch (e) {
+                explainModalContent.innerHTML = `<div style="color: var(--error); padding: 10px;">❌ Error: Failed to connect to server</div>`;
+            }
+        });
+        
+        btnCloseExplain.addEventListener('click', hideModals);
 
         btnInsight.addEventListener('click', () => showModal(insightModal));
         btnCancelInsight.addEventListener('click', hideModals);
