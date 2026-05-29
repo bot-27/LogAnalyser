@@ -52,3 +52,9 @@ data/*.csv
 
 # Internal Documentation
 implementation_plan.md
+
+# VS Code Extension Build & Packaging
+*.vsix
+node_modules/
+vscode-extension/out/
+vscode-extension/.vscode-test/

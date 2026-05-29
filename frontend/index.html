@@ -148,6 +148,77 @@
             border-color: var(--border-glow);
         }
 
+        /* ========== TABS NAVIGATION ========== */
+        .tabs-nav {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            background: rgba(17, 24, 39, 0.4);
+            backdrop-filter: blur(12px);
+            padding: 6px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-color);
+            position: relative;
+            z-index: 2;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            border-radius: calc(var(--radius-sm) - 4px);
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            outline: none;
+        }
+
+        .tab-btn:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .tab-btn.active {
+            color: white;
+            background: var(--accent-gradient);
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+
+        /* Tabs content toggles */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: tabFadeIn 0.4s ease-out;
+        }
+
+        @keyframes tabFadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* KG Empty State styling */
+        .kg-empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 64px 24px;
+            color: var(--text-secondary);
+        }
+
+
         /* ========== MODEL SELECTOR ========== */
         .config-row {
             display: flex;
@@ -710,79 +781,100 @@
             <p class="subtitle">Upload your log file and get AI-powered insights — 100% local, private, and free</p>
         </header>
 
-        <!-- Upload Card -->
-        <div class="card" id="uploadCard">
-            <!-- Model selector -->
-            <div class="config-row">
-                <label for="modelSelect">
-                    <span class="status-dot online" id="statusDot"></span>
-                    Model
-                </label>
-                <select id="modelSelect" class="model-select">
-                    <option value="">Loading models…</option>
-                </select>
-                <span class="status-text" id="statusText">Connecting…</span>
-            </div>
+        <!-- Tabs Nav -->
+        <div class="tabs-nav">
+            <button class="tab-btn active" id="tabAnalyzeBtn">📊 Log Analysis</button>
+            <button class="tab-btn" id="tabKgBtn">🌐 Knowledge Graph</button>
+        </div>
 
-            <!-- Drop zone -->
-            <div class="dropzone" id="dropzone">
-                <div class="dropzone-icon">📄</div>
-                <p class="dropzone-text">
-                    Drag & drop your log file here, or <strong>click to browse</strong>
-                </p>
-                <p class="dropzone-hint">Supports .txt, .log, .csv — Max 10 MB</p>
-            </div>
-            <input type="file" id="fileInput" class="file-input" accept=".txt,.log,.csv">
-
-            <!-- File info -->
-            <div class="file-info" id="fileInfo">
-                <span class="file-info-icon">📎</span>
-                <div class="file-info-details">
-                    <div class="file-info-name" id="fileName">—</div>
-                    <div class="file-info-size" id="fileSize">—</div>
+        <!-- Log Analysis Tab Content -->
+        <div id="analyzeTabContent" class="tab-content active">
+            <!-- Upload Card -->
+            <div class="card" id="uploadCard">
+                <!-- Model selector -->
+                <div class="config-row">
+                    <label for="modelSelect">
+                        <span class="status-dot online" id="statusDot"></span>
+                        Model
+                    </label>
+                    <select id="modelSelect" class="model-select">
+                        <option value="">Loading models…</option>
+                    </select>
+                    <span class="status-text" id="statusText">Connecting…</span>
                 </div>
-                <button class="file-remove" id="fileRemove" title="Remove file">✕</button>
-            </div>
 
-            <!-- Error -->
-            <div class="error-box" id="errorBox"></div>
-
-            <!-- Analyze button -->
-            <button class="btn-analyze" id="analyzeBtn" disabled>
-                🚀 Analyze Logs
-            </button>
-        </div>
-
-        <!-- Loading -->
-        <div class="card loading" id="loadingSection">
-            <div class="spinner"></div>
-            <div class="loading-text">Analyzing your logs…</div>
-            <div class="loading-detail" id="loadingDetail">Sending to local LLM</div>
-        </div>
-
-        <!-- Results -->
-        <div class="card results-card" id="resultsCard">
-            <div class="results-header">
-                <div class="results-title">📊 Analysis Results</div>
-                <div class="results-meta" id="resultsMeta"></div>
-            </div>
-            <div class="results-content" id="resultsContent"></div>
-        </div>
-
-        <!-- Knowledge Graph -->
-        <div class="card kg-card" id="kgCard">
-            <div class="kg-header">
-                <div class="kg-title">🌐 Knowledge Graph</div>
-                <div class="kg-controls">
-                    <button id="btnRestructure" class="btn-sm">🔄 Restructure</button>
-                    <button id="btnInsight" class="btn-sm">💡 Add Insight</button>
-                    <button id="btnClearKg" class="btn-sm btn-danger">🗑️ Clear</button>
+                <!-- KG Toggle Checkbox -->
+                <div class="config-row" style="margin-top: -12px; margin-bottom: 24px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 0.85rem; color: var(--text-secondary);">
+                        <input type="checkbox" id="useKgCheckbox" checked style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;">
+                        <span>Use prior context from Knowledge Graph during analysis</span>
+                    </label>
                 </div>
+
+                <!-- Drop zone -->
+                <div class="dropzone" id="dropzone">
+                    <div class="dropzone-icon">📄</div>
+                    <p class="dropzone-text">
+                        Drag & drop log files here, or <strong>click to browse</strong>
+                    </p>
+                    <p class="dropzone-hint">Supports .txt, .log, .csv — Max 10 MB per file</p>
+                </div>
+                <input type="file" id="fileInput" class="file-input" accept=".txt,.log,.csv" multiple>
+
+                <!-- File info -->
+                <div class="file-info" id="fileInfo">
+                    <span class="file-info-icon">📎</span>
+                    <div class="file-info-details" style="display: flex; flex-direction: column; width: 100%;">
+                        <div class="file-info-name" id="fileName">—</div>
+                        <div class="file-info-size" id="fileSize">—</div>
+                        <div id="filesQueueList" style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; padding-right: 6px;"></div>
+                    </div>
+                    <button class="file-remove" id="fileRemove" title="Remove all files">✕</button>
+                </div>
+
+                <!-- Error -->
+                <div class="error-box" id="errorBox"></div>
+
+                <!-- Analyze button -->
+                <button class="btn-analyze" id="analyzeBtn" disabled>
+                    🚀 Analyze Logs
+                </button>
             </div>
-            <div class="kg-stats" id="kgStats">Loading stats...</div>
-            <div class="kg-canvas-container" id="kgContainer">
-                <svg id="kgCanvas"></svg>
-                <div class="kg-tooltip" id="kgTooltip"></div>
+
+            <!-- Loading -->
+            <div class="card loading" id="loadingSection">
+                <div class="spinner"></div>
+                <div class="loading-text">Analyzing your logs…</div>
+                <div class="loading-detail" id="loadingDetail">Sending to local LLM</div>
+            </div>
+
+            <!-- Results -->
+            <div class="card results-card" id="resultsCard">
+                <div class="results-header">
+                    <div class="results-title">📊 Analysis Results</div>
+                    <div class="results-meta" id="resultsMeta"></div>
+                </div>
+                <div class="results-content" id="resultsContent"></div>
+            </div>
+        </div>
+
+        <!-- Knowledge Graph Tab Content -->
+        <div id="kgTabContent" class="tab-content">
+            <!-- Knowledge Graph Card -->
+            <div class="card kg-card" id="kgCard" style="display: block; margin-top: 0;">
+                <div class="kg-header">
+                    <div class="kg-title">🌐 Knowledge Graph</div>
+                    <div class="kg-controls">
+                        <button id="btnRestructure" class="btn-sm">🔄 Restructure</button>
+                        <button id="btnInsight" class="btn-sm">💡 Add Insight</button>
+                        <button id="btnClearKg" class="btn-sm btn-danger">🗑️ Clear</button>
+                    </div>
+                </div>
+                <div class="kg-stats" id="kgStats">Loading stats...</div>
+                <div class="kg-canvas-container" id="kgContainer">
+                    <svg id="kgCanvas"></svg>
+                    <div class="kg-tooltip" id="kgTooltip"></div>
+                </div>
             </div>
         </div>
 
@@ -816,6 +908,12 @@
         // =============================================
         // DOM Elements
         // =============================================
+        // Tab elements
+        const tabAnalyzeBtn = document.getElementById('tabAnalyzeBtn');
+        const tabKgBtn = document.getElementById('tabKgBtn');
+        const analyzeTabContent = document.getElementById('analyzeTabContent');
+        const kgTabContent = document.getElementById('kgTabContent');
+
         const dropzone = document.getElementById('dropzone');
         const fileInput = document.getElementById('fileInput');
         const fileInfo = document.getElementById('fileInfo');
@@ -847,7 +945,25 @@
         const btnCancelRestructure = document.getElementById('btnCancelRestructure');
         const btnStartRestructure = document.getElementById('btnStartRestructure');
 
-        let selectedFile = null;
+        let selectedFiles = []; // Holds list of File objects
+
+        // =============================================
+        // Tabs Switching Logic
+        // =============================================
+        tabAnalyzeBtn.addEventListener('click', () => {
+            tabAnalyzeBtn.classList.add('active');
+            tabKgBtn.classList.remove('active');
+            analyzeTabContent.classList.add('active');
+            kgTabContent.classList.remove('active');
+        });
+
+        tabKgBtn.addEventListener('click', () => {
+            tabKgBtn.classList.add('active');
+            tabAnalyzeBtn.classList.remove('active');
+            kgTabContent.classList.add('active');
+            analyzeTabContent.classList.remove('active');
+            fetchKnowledgeGraph();
+        });
 
         // =============================================
         // Init: Fetch available Ollama models
@@ -863,7 +979,16 @@
                     data.models.forEach(m => {
                         const opt = document.createElement('option');
                         opt.value = m.name;
-                        opt.textContent = m.name;
+                        
+                        // Estimate memory requirement
+                        let details = '';
+                        if (m.size) {
+                            const sizeGB = m.size / (1024 * 1024 * 1024);
+                            const ramNeeded = sizeGB + 0.3;
+                            details = ` (${sizeGB.toFixed(1)} GB | RAM req: ~${ramNeeded.toFixed(1)} GB)`;
+                        }
+                        
+                        opt.textContent = m.name + details;
                         if (m.name === data.default) opt.selected = true;
                         modelSelect.appendChild(opt);
                     });
@@ -901,46 +1026,100 @@
             e.preventDefault();
             dropzone.classList.remove('dragover');
             if (e.dataTransfer.files.length > 0) {
-                handleFile(e.dataTransfer.files[0]);
+                handleFiles(e.dataTransfer.files);
             }
         });
 
         fileInput.addEventListener('change', () => {
             if (fileInput.files.length > 0) {
-                handleFile(fileInput.files[0]);
+                handleFiles(fileInput.files);
             }
         });
 
         // =============================================
-        // File Handling
+        // File Handling & Queue
         // =============================================
-        function handleFile(file) {
+        function handleFiles(files) {
             hideError();
-            const ext = '.' + file.name.split('.').pop().toLowerCase();
             const allowed = ['.txt', '.log', '.csv'];
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const ext = '.' + file.name.split('.').pop().toLowerCase();
+                
+                if (!allowed.includes(ext)) {
+                    showError(`Unsupported file type "${ext}" for file "${file.name}". Allowed: ${allowed.join(', ')}`);
+                    continue;
+                }
+                
+                if (file.size > 10 * 1024 * 1024) {
+                    showError(`File "${file.name}" too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max: 10 MB.`);
+                    continue;
+                }
+                
+                // Avoid duplicate additions
+                if (!selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
+                    selectedFiles.push(file);
+                }
+            }
+            
+            renderFilesQueue();
+        }
 
-            if (!allowed.includes(ext)) {
-                showError(`Unsupported file type "${ext}". Allowed: ${allowed.join(', ')}`);
+        function renderFilesQueue() {
+            const queueList = document.getElementById('filesQueueList');
+            queueList.innerHTML = '';
+            
+            if (selectedFiles.length === 0) {
+                fileInfo.classList.remove('show');
+                analyzeBtn.disabled = true;
                 return;
             }
-
-            if (file.size > 10 * 1024 * 1024) {
-                showError(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum: 10 MB.`);
-                return;
+            
+            selectedFiles.forEach((file, index) => {
+                const fileRow = document.createElement('div');
+                fileRow.style.display = 'flex';
+                fileRow.style.alignItems = 'center';
+                fileRow.style.justifyContent = 'space-between';
+                fileRow.style.padding = '6px 10px';
+                fileRow.style.background = 'rgba(255, 255, 255, 0.04)';
+                fileRow.style.borderRadius = '6px';
+                fileRow.style.border = '1px solid rgba(255, 255, 255, 0.05)';
+                fileRow.style.fontSize = '0.82rem';
+                fileRow.style.marginBottom = '4px';
+                
+                fileRow.innerHTML = `
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80%;" title="${file.name}">📄 ${file.name} (${formatBytes(file.size)})</span>
+                    <span class="remove-single-file" data-index="${index}" style="cursor: pointer; color: var(--text-muted); font-weight: bold; font-size: 1rem; padding: 0 4px;" onmouseover="this.style.color='var(--error)'" onmouseout="this.style.color='var(--text-muted)'">✕</span>
+                `;
+                queueList.appendChild(fileRow);
+            });
+            
+            queueList.querySelectorAll('.remove-single-file').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const idx = parseInt(e.target.getAttribute('data-index'));
+                    selectedFiles.splice(idx, 1);
+                    renderFilesQueue();
+                });
+            });
+            
+            // Update summary
+            if (selectedFiles.length === 1) {
+                fileName.textContent = selectedFiles[0].name;
+                fileSize.textContent = formatBytes(selectedFiles[0].size);
+            } else {
+                fileName.textContent = `${selectedFiles.length} files selected`;
+                fileSize.textContent = formatBytes(selectedFiles.reduce((acc, f) => acc + f.size, 0));
             }
-
-            selectedFile = file;
-            fileName.textContent = file.name;
-            fileSize.textContent = formatBytes(file.size);
+            
             fileInfo.classList.add('show');
             analyzeBtn.disabled = false;
         }
 
         fileRemove.addEventListener('click', () => {
-            selectedFile = null;
+            selectedFiles = [];
             fileInput.value = '';
-            fileInfo.classList.remove('show');
-            analyzeBtn.disabled = true;
+            renderFilesQueue();
         });
 
         function formatBytes(bytes) {
@@ -954,53 +1133,120 @@
         // =============================================
         analyzeBtn.addEventListener('click', uploadAndAnalyze);
 
+        function createAccordionItem(fileName, analysisText, elapsedTime, contextUsed) {
+            const item = document.createElement('div');
+            item.className = 'accordion-item';
+            item.style.border = '1px solid var(--border-color)';
+            item.style.borderRadius = 'var(--radius-sm)';
+            item.style.marginBottom = '12px';
+            item.style.overflow = 'hidden';
+            item.style.background = 'rgba(17, 24, 39, 0.4)';
+            
+            let kgContextHtml = '';
+            if (contextUsed) {
+                kgContextHtml = `<div class="context-pill" style="margin-bottom: 12px; font-size: 0.78rem;">✨ Enhanced with prior context</div>`;
+            }
+            
+            const parsedAnalysis = typeof marked !== 'undefined' ? marked.parse(analysisText) : analysisText;
+            
+            item.innerHTML = `
+                <div class="accordion-header" style="padding: 14px 18px; background: rgba(99, 102, 241, 0.05); display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; font-weight: 600;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span>📄</span>
+                        <span style="color: var(--text-primary); font-size: 0.92rem;">${fileName}</span>
+                        <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-muted); padding: 2px 8px; background: rgba(255, 255, 255, 0.05); border-radius: 12px;">${elapsedTime}s</span>
+                    </div>
+                    <span class="accordion-chevron" style="transition: transform 0.3s; font-size: 0.8rem; color: var(--text-muted);">▼</span>
+                </div>
+                <div class="accordion-content" style="padding: 18px; border-top: 1px solid var(--border-color); display: block;">
+                    ${kgContextHtml}
+                    <div class="results-content">${parsedAnalysis}</div>
+                </div>
+            `;
+            
+            const header = item.querySelector('.accordion-header');
+            const content = item.querySelector('.accordion-content');
+            const chevron = item.querySelector('.accordion-chevron');
+            
+            header.addEventListener('click', () => {
+                const isOpen = content.style.display !== 'none';
+                content.style.display = isOpen ? 'none' : 'block';
+                chevron.style.transform = isOpen ? 'rotate(-90deg)' : 'rotate(0deg)';
+            });
+            
+            return item;
+        }
+
         async function uploadAndAnalyze() {
-            if (!selectedFile) return;
+            if (selectedFiles.length === 0) return;
 
             hideError();
             resultsCard.classList.remove('show');
             loadingSection.classList.add('show');
             analyzeBtn.disabled = true;
-            loadingDetail.textContent = `Using model: ${modelSelect.value || 'default'}`;
-
-            const startTime = Date.now();
+            
+            const useKg = document.getElementById('useKgCheckbox').checked;
+            const modelVal = modelSelect.value;
+            
+            const totalStartTime = Date.now();
+            resultsContent.innerHTML = ''; // Clear prior results
+            
+            let successCount = 0;
+            let errorCount = 0;
 
             try {
-                const formData = new FormData();
-                formData.append('file', selectedFile);
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    const file = selectedFiles[i];
+                    loadingDetail.textContent = `[${i + 1}/${selectedFiles.length}] Analyzing ${file.name}...`;
+                    
+                    const fileStartTime = Date.now();
+                    
+                    try {
+                        const formData = new FormData();
+                        formData.append('file', file);
 
-                let url = '/analyze';
-                if (modelSelect.value) {
-                    url += `?model=${encodeURIComponent(modelSelect.value)}`;
+                        let url = `/analyze?use_kg=${useKg}`;
+                        if (modelVal) {
+                            url += `&model=${encodeURIComponent(modelVal)}`;
+                        }
+
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            body: formData,
+                        });
+
+                        const data = await response.json();
+
+                        if (!response.ok) {
+                            throw new Error(data.error || `Server error (${response.status})`);
+                        }
+
+                        const fileElapsed = ((Date.now() - fileStartTime) / 1000).toFixed(1);
+                        successCount++;
+                        
+                        const accordionItem = createAccordionItem(
+                            file.name,
+                            data.analysis,
+                            fileElapsed,
+                            data.knowledge_graph && data.knowledge_graph.context_used
+                        );
+                        resultsContent.appendChild(accordionItem);
+
+                    } catch (fileErr) {
+                        errorCount++;
+                        const errorMsg = `Error analyzing file: ${fileErr.message}`;
+                        const errorItem = createAccordionItem(
+                            file.name,
+                            `### ❌ Analysis Failed\n\n${errorMsg}`,
+                            "0.0",
+                            false
+                        );
+                        resultsContent.appendChild(errorItem);
+                    }
                 }
-
-                const response = await fetch(url, {
-                    method: 'POST',
-                    body: formData,
-                });
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.error || `Server error (${response.status})`);
-                }
-
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                resultsMeta.textContent = `${elapsed}s · ${modelSelect.value || 'default'}`;
-
-                // Render markdown
-                let contentHtml = '';
-                if (data.knowledge_graph && data.knowledge_graph.context_used) {
-                    contentHtml += `<div class="context-pill">✨ Enhanced with prior insights from Knowledge Graph</div>`;
-                }
-
-                if (typeof marked !== 'undefined') {
-                    contentHtml += marked.parse(data.analysis);
-                } else {
-                    contentHtml += data.analysis;
-                }
-                resultsContent.innerHTML = contentHtml;
-
+                
+                const totalElapsed = ((Date.now() - totalStartTime) / 1000).toFixed(1);
+                resultsMeta.textContent = `${totalElapsed}s · ${modelVal || 'default'} · ${successCount} ok${errorCount > 0 ? `, ${errorCount} err` : ''}`;
                 resultsCard.classList.add('show');
                 
                 // Refresh Graph
@@ -1045,11 +1291,24 @@
                 if (!summaryResp.ok) return;
                 const summary = await summaryResp.json();
 
+                const container = document.getElementById('kgContainer');
                 if (!summary.has_data) {
-                    kgCard.classList.remove('show');
+                    kgStats.textContent = '0 nodes · 0 edges';
+                    container.innerHTML = `
+                        <div class="kg-empty-state">
+                            <div style="font-size: 48px; margin-bottom: 16px;">🌐</div>
+                            <h3>Knowledge Graph is Empty</h3>
+                            <p style="color: var(--text-muted); margin-top: 8px;">Upload and analyze log files in the first tab to automatically extract entities and populate this graph.</p>
+                        </div>
+                    `;
                     return;
                 }
-                kgCard.classList.add('show');
+                
+                // Restore svg canvas if it was replaced by empty state
+                if (!document.getElementById('kgCanvas')) {
+                    container.innerHTML = '<svg id="kgCanvas"></svg><div class="kg-tooltip" id="kgTooltip"></div>';
+                }
+                
                 kgStats.textContent = `${summary.total_nodes} nodes · ${summary.total_edges} edges`;
 
                 const dataResp = await fetch('/knowledge-graph/data');
@@ -1237,6 +1496,25 @@
                 } catch(e) {}
             }
         });
+
+        // Listen for messages from VS Code extension Webview parent wrapper
+        window.addEventListener('message', event => {
+            if (event.data && event.data.command === 'analyze') {
+                const file = new File([event.data.text], event.data.name, { type: 'text/plain' });
+                selectedFiles = [file];
+                renderFilesQueue();
+                uploadAndAnalyze();
+            } else if (event.data && event.data.command === 'analyzeBatch') {
+                selectedFiles = event.data.files.map(f => new File([f.text], f.name, { type: 'text/plain' }));
+                renderFilesQueue();
+                uploadAndAnalyze();
+            }
+        });
+
+        // Signal to parent window (VS Code Webview) that we are ready
+        if (window.parent !== window) {
+            window.parent.postMessage({ command: 'ready' }, '*');
+        }
 
     </script>
 </body>

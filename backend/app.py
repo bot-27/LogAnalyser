@@ -102,7 +102,7 @@ def split_logs(log_text: str):
 # ---------------------------------------------------------------------------
 # Log Analysis (enhanced with knowledge graph context)
 # ---------------------------------------------------------------------------
-async def analyze_logs(log_text: str, model: str | None = None):
+async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = True):
     """Analyze logs by splitting and processing each chunk, with KG context."""
     selected_model = model or DEFAULT_MODEL
 
@@ -112,9 +112,13 @@ async def analyze_logs(log_text: str, model: str | None = None):
         base_url=OLLAMA_BASE_URL,
     )
 
-    # Retrieve relevant context from knowledge graph
-    prior_knowledge = kg_manager.get_relevant_context(log_text)
-    context_used = len(prior_knowledge) > 0
+    # Retrieve relevant context from knowledge graph if enabled
+    if use_kg:
+        prior_knowledge = kg_manager.get_relevant_context(log_text)
+        context_used = len(prior_knowledge) > 0
+    else:
+        prior_knowledge = ""
+        context_used = False
 
     if prior_knowledge:
         prior_section = (
@@ -160,6 +164,7 @@ async def root():
 async def analyze_log_file(
     file: UploadFile = File(...),
     model: str | None = None,
+    use_kg: bool = True,
 ):
     """Analyze uploaded log file and update knowledge graph."""
     # Validate file extension
@@ -203,7 +208,7 @@ async def analyze_log_file(
             log_text.count("\n") + 1,
         )
 
-        insights, context_used = await analyze_logs(log_text, model)
+        insights, context_used = await analyze_logs(log_text, model, use_kg)
 
         # Extract entities from analysis and add to knowledge graph
         kg_update = {}
