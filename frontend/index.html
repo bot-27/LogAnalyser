@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AI-powered log analysis tool. Upload your log files and get instant root cause analysis, error detection, and actionable insights using a local LLM.">
+    <title>LogAnalyzer Agent — AI-Powered Log Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        /* ========== CSS RESET & VARIABLES ========== */
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: rgba(17, 24, 39, 0.7);
+            --bg-card-hover: rgba(30, 41, 59, 0.8);
+            --border-color: rgba(99, 102, 241, 0.2);
+            --border-glow: rgba(99, 102, 241, 0.4);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #818cf8;
+            --accent-bright: #a5b4fc;
+            --accent-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --success: #34d399;
+            --success-bg: rgba(52, 211, 153, 0.1);
+            --error: #f87171;
+            --error-bg: rgba(248, 113, 113, 0.1);
+            --warning: #fbbf24;
+            --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            --shadow-glow: 0 0 40px rgba(99, 102, 241, 0.15);
+            --radius: 16px;
+            --radius-sm: 10px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* ========== ANIMATED BACKGROUND ========== */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(118, 75, 162, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(99, 102, 241, 0.03) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+            animation: bgPulse 8s ease-in-out infinite alternate;
+        }
+
+        @keyframes bgPulse {
+            0% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+
+        /* ========== LAYOUT ========== */
+        .container {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 40px 24px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* ========== HEADER ========== */
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 16px;
+        }
+
+        .logo-icon {
+            width: 52px;
+            height: 52px;
+            background: var(--accent-gradient);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            box-shadow: 0 8px 32px rgba(99, 102, 241, 0.3);
+            animation: iconFloat 3s ease-in-out infinite;
+        }
+
+        @keyframes iconFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-4px); }
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-bright) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.05rem;
+            font-weight: 400;
+            margin-top: 8px;
+        }
+
+        /* ========== GLASSMORPHISM CARD ========== */
+        .card {
+            background: var(--bg-card);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow-lg), var(--shadow-glow);
+            transition: var(--transition);
+        }
+
+        .card:hover {
+            border-color: var(--border-glow);
+        }
+
+        /* ========== MODEL SELECTOR ========== */
+        .config-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .config-row label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        .model-select {
+            flex: 1;
+            padding: 10px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            outline: none;
+            cursor: pointer;
+            transition: var(--transition);
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 5.5l6.5 6.5 6.5-6.5'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 14px center;
+            padding-right: 40px;
+        }
+
+        .model-select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .status-dot.online { background: var(--success); }
+        .status-dot.offline { background: var(--error); animation: none; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.4); }
+            50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(52, 211, 153, 0); }
+        }
+
+        .status-text {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }
+
+        /* ========== DROPZONE ========== */
+        .dropzone {
+            border: 2px dashed var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 48px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: var(--transition);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .dropzone::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: var(--accent-gradient);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .dropzone:hover,
+        .dropzone.dragover {
+            border-color: var(--accent);
+            background: rgba(99, 102, 241, 0.05);
+        }
+
+        .dropzone.dragover::before {
+            opacity: 0.05;
+        }
+
+        .dropzone-icon {
+            font-size: 42px;
+            margin-bottom: 12px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .dropzone-text {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        .dropzone-text strong {
+            color: var(--accent-bright);
+        }
+
+        .dropzone-hint {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            margin-top: 8px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        /* ========== FILE INFO ========== */
+        .file-info {
+            display: none;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 18px;
+            background: var(--success-bg);
+            border: 1px solid rgba(52, 211, 153, 0.2);
+            border-radius: var(--radius-sm);
+            margin-top: 16px;
+        }
+
+        .file-info.show { display: flex; }
+
+        .file-info-icon { font-size: 20px; }
+
+        .file-info-details {
+            flex: 1;
+        }
+
+        .file-info-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--success);
+        }
+
+        .file-info-size {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }
+
+        .file-remove {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 18px;
+            padding: 4px;
+            transition: var(--transition);
+        }
+
+        .file-remove:hover { color: var(--error); }
+
+        /* ========== ANALYZE BUTTON ========== */
+        .btn-analyze {
+            width: 100%;
+            padding: 16px 32px;
+            background: var(--accent-gradient);
+            color: white;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            margin-top: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-analyze::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .btn-analyze:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-analyze:hover:not(:disabled)::after {
+            opacity: 1;
+        }
+
+        .btn-analyze:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .btn-analyze:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* ========== LOADING STATE ========== */
+        .loading {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            padding: 48px 24px;
+        }
+
+        .loading.show { display: flex; }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .loading-detail {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* ========== ERROR STATE ========== */
+        .error-box {
+            display: none;
+            padding: 16px 20px;
+            background: var(--error-bg);
+            border: 1px solid rgba(248, 113, 113, 0.2);
+            border-radius: var(--radius-sm);
+            color: var(--error);
+            font-size: 0.9rem;
+            margin-top: 16px;
+        }
+
+        .error-box.show { display: block; }
+
+        /* ========== RESULTS ========== */
+        .results-card {
+            display: none;
+        }
+
+        .results-card.show { display: block; }
+
+        .results-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .results-title {
+            font-size: 1.15rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .results-meta {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .results-content {
+            font-size: 0.92rem;
+            line-height: 1.75;
+            color: var(--text-secondary);
+        }
+
+        /* Markdown styling inside results */
+        .results-content h1,
+        .results-content h2,
+        .results-content h3 {
+            color: var(--text-primary);
+            margin: 24px 0 12px;
+            font-weight: 600;
+        }
+
+        .results-content h1 { font-size: 1.3rem; }
+        .results-content h2 { font-size: 1.12rem; }
+        .results-content h3 { font-size: 1rem; }
+
+        .results-content p {
+            margin-bottom: 12px;
+        }
+
+        .results-content strong {
+            color: var(--text-primary);
+        }
+
+        .results-content ul,
+        .results-content ol {
+            padding-left: 24px;
+            margin-bottom: 12px;
+        }
+
+        .results-content li {
+            margin-bottom: 6px;
+        }
+
+        .results-content code {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--accent-bright);
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85em;
+        }
+
+        .results-content pre {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 16px;
+            overflow-x: auto;
+            margin-bottom: 16px;
+        }
+
+        .results-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .results-content hr {
+            border: none;
+            border-top: 1px solid var(--border-color);
+            margin: 28px 0;
+        }
+
+        .results-content blockquote {
+            border-left: 3px solid var(--accent);
+            padding-left: 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+        }
+
+        /* ========== FOOTER ========== */
+        footer {
+            text-align: center;
+            padding: 32px 0 16px;
+            color: var(--text-muted);
+            font-size: 0.78rem;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        /* ========== RESPONSIVE ========== */
+        @media (max-width: 640px) {
+            .container { padding: 24px 16px; }
+            .card { padding: 24px 20px; }
+            h1 { font-size: 1.5rem; }
+            .config-row { flex-direction: column; align-items: stretch; gap: 8px; }
+            .dropzone { padding: 36px 16px; }
+        }
+
+        /* ========== KNOWLEDGE GRAPH ========== */
+        .kg-card {
+            display: none;
+            margin-top: 24px;
+        }
+
+        .kg-card.show {
+            display: block;
+        }
+
+        .kg-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .kg-title {
+            font-size: 1.15rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .kg-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-sm {
+            padding: 8px 12px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .btn-sm:hover {
+            border-color: var(--accent);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .btn-danger:hover {
+            border-color: var(--error);
+            background: rgba(248, 113, 113, 0.1);
+            color: var(--error);
+        }
+
+        .kg-stats {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .kg-canvas-container {
+            width: 100%;
+            height: 400px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            position: relative;
+        }
+
+        #kgCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .node circle { stroke: var(--bg-primary); stroke-width: 1.5px; }
+        .node text { font-family: 'Inter', sans-serif; font-size: 11px; fill: var(--text-primary); pointer-events: none; }
+        .link { stroke: var(--text-muted); stroke-opacity: 0.4; }
+
+        .kg-tooltip {
+            position: absolute;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            padding: 12px;
+            border-radius: var(--radius-sm);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            z-index: 10;
+            box-shadow: var(--shadow-lg);
+            max-width: 300px;
+        }
+        .kg-tooltip h4 { margin-bottom: 6px; color: var(--accent-bright); font-size: 0.95rem; }
+        .kg-tooltip p { margin-bottom: 4px; }
+        .kg-tooltip .meta { font-size: 0.75rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+
+        /* ========== MODALS ========== */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 14, 26, 0.8);
+            backdrop-filter: blur(4px);
+            z-index: 100;
+            display: none;
+        }
+        .modal-overlay.show { display: block; }
+
+        .modal {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.95);
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 24px;
+            width: 90%; max-width: 450px;
+            z-index: 101;
+            opacity: 0;
+            pointer-events: none;
+            transition: var(--transition);
+            box-shadow: var(--shadow-lg);
+        }
+        .modal.show {
+            opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1);
+        }
+
+        .modal h3 { margin-bottom: 16px; font-size: 1.15rem; }
+        .modal textarea, .modal input {
+            width: 100%; background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 12px; border-radius: var(--radius-sm);
+            font-family: inherit; font-size: 0.9rem;
+            margin-bottom: 16px;
+            outline: none; transition: var(--transition);
+            resize: vertical;
+        }
+        .modal textarea:focus, .modal input:focus { border-color: var(--accent); }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 12px; }
+        .btn-cancel {
+            padding: 10px 16px; background: transparent; border: 1px solid var(--text-muted);
+            color: var(--text-primary); border-radius: var(--radius-sm); cursor: pointer;
+        }
+        .btn-cancel:hover { background: rgba(255,255,255,0.05); }
+        .btn-primary {
+            padding: 10px 16px; background: var(--accent-gradient); border: none;
+            color: white; border-radius: var(--radius-sm); cursor: pointer; font-weight: 500;
+        }
+        .btn-primary:hover { filter: brightness(1.1); }
+
+        .context-pill {
+            display: inline-block;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            color: var(--accent-bright);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo">
+                <div class="logo-icon">🔍</div>
+                <h1>LogAnalyzer Agent</h1>
+            </div>
+            <p class="subtitle">Upload your log file and get AI-powered insights — 100% local, private, and free</p>
+        </header>
+
+        <!-- Upload Card -->
+        <div class="card" id="uploadCard">
+            <!-- Model selector -->
+            <div class="config-row">
+                <label for="modelSelect">
+                    <span class="status-dot online" id="statusDot"></span>
+                    Model
+                </label>
+                <select id="modelSelect" class="model-select">
+                    <option value="">Loading models…</option>
+                </select>
+                <span class="status-text" id="statusText">Connecting…</span>
+            </div>
+
+            <!-- Drop zone -->
+            <div class="dropzone" id="dropzone">
+                <div class="dropzone-icon">📄</div>
+                <p class="dropzone-text">
+                    Drag & drop your log file here, or <strong>click to browse</strong>
+                </p>
+                <p class="dropzone-hint">Supports .txt, .log, .csv — Max 10 MB</p>
+            </div>
+            <input type="file" id="fileInput" class="file-input" accept=".txt,.log,.csv">
+
+            <!-- File info -->
+            <div class="file-info" id="fileInfo">
+                <span class="file-info-icon">📎</span>
+                <div class="file-info-details">
+                    <div class="file-info-name" id="fileName">—</div>
+                    <div class="file-info-size" id="fileSize">—</div>
+                </div>
+                <button class="file-remove" id="fileRemove" title="Remove file">✕</button>
+            </div>
+
+            <!-- Error -->
+            <div class="error-box" id="errorBox"></div>
+
+            <!-- Analyze button -->
+            <button class="btn-analyze" id="analyzeBtn" disabled>
+                🚀 Analyze Logs
+            </button>
+        </div>
+
+        <!-- Loading -->
+        <div class="card loading" id="loadingSection">
+            <div class="spinner"></div>
+            <div class="loading-text">Analyzing your logs…</div>
+            <div class="loading-detail" id="loadingDetail">Sending to local LLM</div>
+        </div>
+
+        <!-- Results -->
+        <div class="card results-card" id="resultsCard">
+            <div class="results-header">
+                <div class="results-title">📊 Analysis Results</div>
+                <div class="results-meta" id="resultsMeta"></div>
+            </div>
+            <div class="results-content" id="resultsContent"></div>
+        </div>
+
+        <!-- Knowledge Graph -->
+        <div class="card kg-card" id="kgCard">
+            <div class="kg-header">
+                <div class="kg-title">🌐 Knowledge Graph</div>
+                <div class="kg-controls">
+                    <button id="btnRestructure" class="btn-sm">🔄 Restructure</button>
+                    <button id="btnInsight" class="btn-sm">💡 Add Insight</button>
+                    <button id="btnClearKg" class="btn-sm btn-danger">🗑️ Clear</button>
+                </div>
+            </div>
+            <div class="kg-stats" id="kgStats">Loading stats...</div>
+            <div class="kg-canvas-container" id="kgContainer">
+                <svg id="kgCanvas"></svg>
+                <div class="kg-tooltip" id="kgTooltip"></div>
+            </div>
+        </div>
+
+        <!-- Modals -->
+        <div class="modal-overlay" id="modalOverlay"></div>
+        <div class="modal" id="insightModal">
+            <h3>Add Developer Insight</h3>
+            <textarea id="insightText" placeholder="Enter your insight here... e.g. Database connections spike on Mondays" rows="4"></textarea>
+            <input type="text" id="insightRelated" placeholder="Related entities (comma separated IDs, optional)">
+            <div class="modal-actions">
+                <button id="btnCancelInsight" class="btn-cancel">Cancel</button>
+                <button id="btnSaveInsight" class="btn-primary">Save</button>
+            </div>
+        </div>
+        <div class="modal" id="restructureModal">
+            <h3>Restructure Knowledge Graph</h3>
+            <textarea id="restructureText" placeholder="Instructions (e.g., merge duplicates)" rows="4">Auto-restructure: merge duplicates and clean up.</textarea>
+            <div class="modal-actions">
+                <button id="btnCancelRestructure" class="btn-cancel">Cancel</button>
+                <button id="btnStartRestructure" class="btn-primary">Start Restructure</button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            Built with FastAPI + LangChain + Ollama
+        </footer>
+    </div>
+
+    <script>
+        // =============================================
+        // DOM Elements
+        // =============================================
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+        const fileRemove = document.getElementById('fileRemove');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const errorBox = document.getElementById('errorBox');
+        const loadingSection = document.getElementById('loadingSection');
+        const loadingDetail = document.getElementById('loadingDetail');
+        const resultsCard = document.getElementById('resultsCard');
+        const resultsContent = document.getElementById('resultsContent');
+        const resultsMeta = document.getElementById('resultsMeta');
+        const modelSelect = document.getElementById('modelSelect');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+
+        const kgCard = document.getElementById('kgCard');
+        const kgStats = document.getElementById('kgStats');
+        const btnRestructure = document.getElementById('btnRestructure');
+        const btnInsight = document.getElementById('btnInsight');
+        const btnClearKg = document.getElementById('btnClearKg');
+        
+        const modalOverlay = document.getElementById('modalOverlay');
+        const insightModal = document.getElementById('insightModal');
+        const btnCancelInsight = document.getElementById('btnCancelInsight');
+        const btnSaveInsight = document.getElementById('btnSaveInsight');
+        const restructureModal = document.getElementById('restructureModal');
+        const btnCancelRestructure = document.getElementById('btnCancelRestructure');
+        const btnStartRestructure = document.getElementById('btnStartRestructure');
+
+        let selectedFile = null;
+
+        // =============================================
+        // Init: Fetch available Ollama models
+        // =============================================
+        async function fetchModels() {
+            try {
+                const resp = await fetch('/models');
+                if (!resp.ok) throw new Error('Ollama not reachable');
+                const data = await resp.json();
+
+                modelSelect.innerHTML = '';
+                if (data.models && data.models.length > 0) {
+                    data.models.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m.name;
+                        opt.textContent = m.name;
+                        if (m.name === data.default) opt.selected = true;
+                        modelSelect.appendChild(opt);
+                    });
+                    statusDot.className = 'status-dot online';
+                    statusText.textContent = `${data.models.length} model(s) available`;
+                } else {
+                    modelSelect.innerHTML = '<option value="">No models found</option>';
+                    statusDot.className = 'status-dot offline';
+                    statusText.textContent = 'Pull a model: ollama pull llama3.1:8b';
+                }
+            } catch (e) {
+                modelSelect.innerHTML = '<option value="">Ollama offline</option>';
+                statusDot.className = 'status-dot offline';
+                statusText.textContent = 'Start Ollama first';
+            }
+        }
+
+        fetchModels();
+
+        // =============================================
+        // Drag & Drop
+        // =============================================
+        dropzone.addEventListener('click', () => fileInput.click());
+
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('dragover');
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                handleFile(fileInput.files[0]);
+            }
+        });
+
+        // =============================================
+        // File Handling
+        // =============================================
+        function handleFile(file) {
+            hideError();
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            const allowed = ['.txt', '.log', '.csv'];
+
+            if (!allowed.includes(ext)) {
+                showError(`Unsupported file type "${ext}". Allowed: ${allowed.join(', ')}`);
+                return;
+            }
+
+            if (file.size > 10 * 1024 * 1024) {
+                showError(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum: 10 MB.`);
+                return;
+            }
+
+            selectedFile = file;
+            fileName.textContent = file.name;
+            fileSize.textContent = formatBytes(file.size);
+            fileInfo.classList.add('show');
+            analyzeBtn.disabled = false;
+        }
+
+        fileRemove.addEventListener('click', () => {
+            selectedFile = null;
+            fileInput.value = '';
+            fileInfo.classList.remove('show');
+            analyzeBtn.disabled = true;
+        });
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        }
+
+        // =============================================
+        // Analysis
+        // =============================================
+        analyzeBtn.addEventListener('click', uploadAndAnalyze);
+
+        async function uploadAndAnalyze() {
+            if (!selectedFile) return;
+
+            hideError();
+            resultsCard.classList.remove('show');
+            loadingSection.classList.add('show');
+            analyzeBtn.disabled = true;
+            loadingDetail.textContent = `Using model: ${modelSelect.value || 'default'}`;
+
+            const startTime = Date.now();
+
+            try {
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+
+                let url = '/analyze';
+                if (modelSelect.value) {
+                    url += `?model=${encodeURIComponent(modelSelect.value)}`;
+                }
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || `Server error (${response.status})`);
+                }
+
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                resultsMeta.textContent = `${elapsed}s · ${modelSelect.value || 'default'}`;
+
+                // Render markdown
+                let contentHtml = '';
+                if (data.knowledge_graph && data.knowledge_graph.context_used) {
+                    contentHtml += `<div class="context-pill">✨ Enhanced with prior insights from Knowledge Graph</div>`;
+                }
+
+                if (typeof marked !== 'undefined') {
+                    contentHtml += marked.parse(data.analysis);
+                } else {
+                    contentHtml += data.analysis;
+                }
+                resultsContent.innerHTML = contentHtml;
+
+                resultsCard.classList.add('show');
+                
+                // Refresh Graph
+                fetchKnowledgeGraph();
+
+            } catch (err) {
+                showError(err.message);
+            } finally {
+                loadingSection.classList.remove('show');
+                analyzeBtn.disabled = false;
+            }
+        }
+
+        // =============================================
+        // Error Helpers
+        // =============================================
+        function showError(msg) {
+            errorBox.textContent = msg;
+            errorBox.classList.add('show');
+        }
+
+        function hideError() {
+            errorBox.classList.remove('show');
+        }
+
+        // =============================================
+        // Knowledge Graph
+        // =============================================
+        const nodeColors = {
+            service: '#60a5fa', // blue
+            error: '#f87171', // red
+            root_cause: '#fb923c', // orange
+            pattern: '#c084fc', // purple
+            fix: '#34d399', // green
+            insight: '#fde047', // yellow
+            unknown: '#94a3b8' // gray
+        };
+
+        async function fetchKnowledgeGraph() {
+            try {
+                const summaryResp = await fetch('/knowledge-graph');
+                if (!summaryResp.ok) return;
+                const summary = await summaryResp.json();
+
+                if (!summary.has_data) {
+                    kgCard.classList.remove('show');
+                    return;
+                }
+                kgCard.classList.add('show');
+                kgStats.textContent = `${summary.total_nodes} nodes · ${summary.total_edges} edges`;
+
+                const dataResp = await fetch('/knowledge-graph/data');
+                if (!dataResp.ok) return;
+                const graphData = await dataResp.json();
+                
+                renderGraph(graphData);
+            } catch (e) {
+                console.error("Failed to load knowledge graph", e);
+            }
+        }
+
+        function renderGraph(graphData) {
+            const container = document.getElementById('kgContainer');
+            const svg = d3.select('#kgCanvas');
+            const tooltip = d3.select('#kgTooltip');
+            
+            svg.selectAll('*').remove();
+            
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            
+            // Setup Zoom
+            const zoom = d3.zoom()
+                .scaleExtent([0.1, 4])
+                .on("zoom", (event) => {
+                    g.attr("transform", event.transform);
+                });
+            svg.call(zoom);
+            
+            const g = svg.append("g");
+
+            const simulation = d3.forceSimulation(graphData.nodes)
+                .force("link", d3.forceLink(graphData.edges).id(d => d.id).distance(100))
+                .force("charge", d3.forceManyBody().strength(-300))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collide", d3.forceCollide().radius(40));
+
+            const link = g.append("g")
+                .selectAll("line")
+                .data(graphData.edges)
+                .join("line")
+                .attr("class", "link")
+                .attr("stroke-width", 1.5);
+
+            const node = g.append("g")
+                .selectAll("g")
+                .data(graphData.nodes)
+                .join("g")
+                .attr("class", "node")
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended));
+
+            node.append("circle")
+                .attr("r", d => 10 + Math.min(d.observation_count * 2, 20))
+                .attr("fill", d => nodeColors[d.type] || nodeColors.unknown);
+
+            node.append("text")
+                .attr("dx", 15)
+                .attr("dy", ".35em")
+                .text(d => d.label);
+
+            node.on("mouseover", (event, d) => {
+                tooltip.transition().duration(200).style("opacity", 1);
+                
+                const typeColor = nodeColors[d.type] || nodeColors.unknown;
+                
+                let html = `<h4 style="color:${typeColor}">${d.label}</h4>`;
+                html += `<p>${d.description}</p>`;
+                html += `<div class="meta">Type: ${d.type}<br>Observed: ${d.observation_count}x</div>`;
+                
+                tooltip.html(html)
+                    .style("left", (event.pageX + 15) + "px")
+                    .style("top", (event.pageY - 28) + "px");
+            })
+            .on("mouseout", () => {
+                tooltip.transition().duration(500).style("opacity", 0);
+            });
+
+            simulation.on("tick", () => {
+                link
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+
+                node.attr("transform", d => `translate(${d.x},${d.y})`);
+            });
+
+            function dragstarted(event) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0);
+                event.subject.fx = null;
+                event.subject.fy = null;
+            }
+        }
+
+        // Init KG load
+        fetchKnowledgeGraph();
+
+        // Modals Logic
+        function showModal(modal) {
+            modalOverlay.classList.add('show');
+            modal.classList.add('show');
+        }
+        function hideModals() {
+            modalOverlay.classList.remove('show');
+            insightModal.classList.remove('show');
+            restructureModal.classList.remove('show');
+        }
+
+        btnInsight.addEventListener('click', () => showModal(insightModal));
+        btnCancelInsight.addEventListener('click', hideModals);
+        
+        btnSaveInsight.addEventListener('click', async () => {
+            const text = document.getElementById('insightText').value;
+            const related = document.getElementById('insightRelated').value.split(',').map(s => s.trim()).filter(Boolean);
+            
+            if (!text) return alert("Insight text required");
+            
+            btnSaveInsight.disabled = true;
+            btnSaveInsight.textContent = "Saving...";
+            
+            try {
+                const resp = await fetch('/knowledge-graph/insight', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ insight: text, related_entities: related })
+                });
+                if (resp.ok) {
+                    document.getElementById('insightText').value = '';
+                    document.getElementById('insightRelated').value = '';
+                    hideModals();
+                    fetchKnowledgeGraph();
+                }
+            } catch (e) {
+                alert("Error saving insight");
+            } finally {
+                btnSaveInsight.disabled = false;
+                btnSaveInsight.textContent = "Save";
+            }
+        });
+
+        btnRestructure.addEventListener('click', () => showModal(restructureModal));
+        btnCancelRestructure.addEventListener('click', hideModals);
+
+        btnStartRestructure.addEventListener('click', async () => {
+            const text = document.getElementById('restructureText').value;
+            btnStartRestructure.disabled = true;
+            btnStartRestructure.textContent = "Restructuring... (may take a minute)";
+            
+            try {
+                const resp = await fetch('/knowledge-graph/restructure', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ instructions: text, model: modelSelect.value })
+                });
+                if (resp.ok) {
+                    hideModals();
+                    fetchKnowledgeGraph();
+                }
+            } catch (e) {
+                alert("Error restructuring");
+            } finally {
+                btnStartRestructure.disabled = false;
+                btnStartRestructure.textContent = "Start Restructure";
+            }
+        });
+
+        btnClearKg.addEventListener('click', async () => {
+            if (confirm("Are you sure you want to clear the entire knowledge graph?")) {
+                try {
+                    await fetch('/knowledge-graph', { method: 'DELETE' });
+                    fetchKnowledgeGraph();
+                } catch(e) {}
+            }
+        });
+
+    </script>
+</body>
+</html>

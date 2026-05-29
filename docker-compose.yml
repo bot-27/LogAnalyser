@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  loganalyzer:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    container_name: loganalyzer-agent
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      # Use host.docker.internal to connect to Ollama running on the host machine
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-10}
+      - KNOWLEDGE_GRAPH_DIR=/app/data/knowledge_graph
+      - PORT=8000
+    extra_hosts:
+      # Ensures host.docker.internal resolves correctly across OSes
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
