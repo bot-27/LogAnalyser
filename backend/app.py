@@ -149,6 +149,61 @@ async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = T
     return full_analysis, context_used
 
 
+def preprocess_log_text(log_text: str, max_chars: int = 100000) -> tuple[str, bool, str]:
+    """
+    Preprocess log text. If it exceeds max_chars, filter it to keep only lines with
+    keywords (and their immediate context) to avoid overloading the LLM and causing timeouts.
+    """
+    orig_len = len(log_text)
+    if orig_len <= max_chars:
+        return log_text, False, f"Original file ({orig_len / 1024:.1f} KB)"
+
+    lines = log_text.splitlines()
+    num_lines = len(lines)
+    
+    # Identify lines with error-related keywords
+    keywords = {"error", "fail", "exception", "critical", "fatal", "warn", "severe", "stacktrace", "traceback", "caused by"}
+    matched_indices = set()
+    
+    for idx, line in enumerate(lines):
+        line_lower = line.lower()
+        if any(kw in line_lower for kw in keywords):
+            # Add context: 2 lines before and 2 lines after
+            start = max(0, idx - 2)
+            end = min(num_lines, idx + 3)
+            for j in range(start, end):
+                matched_indices.add(j)
+                
+    # If no lines match (highly unusual for logs), fall back to taking the tail of the log
+    if not matched_indices:
+        tail_text = "\n".join(lines[-1000:])
+        if len(tail_text) > max_chars:
+            tail_text = tail_text[-max_chars:]
+        return tail_text, True, f"Large file tail (no errors found, showing last {len(tail_text)/1024:.1f} KB)"
+
+    # Build the filtered text
+    sorted_indices = sorted(list(matched_indices))
+    
+    # We insert separators [...] where there are gaps in matching context lines
+    filtered_parts = []
+    prev_idx = -2
+    for idx in sorted_indices:
+        if prev_idx != -2 and idx > prev_idx + 1:
+            filtered_parts.append("[...]")
+        filtered_parts.append(lines[idx])
+        prev_idx = idx
+        
+    filtered_text = "\n".join(filtered_parts)
+    
+    # If filtered text is still larger than max_chars, take the tail of it
+    if len(filtered_text) > max_chars:
+        filtered_text = "[...]\n" + filtered_text[-max_chars:]
+        
+    reduction_pct = (1 - len(filtered_text) / orig_len) * 100
+    status_msg = f"Filtered {orig_len / 1024 / 1024:.1f} MB down to {len(filtered_text) / 1024:.1f} KB of error context ({reduction_pct:.1f}% reduction)"
+    return filtered_text, True, status_msg
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -208,7 +263,21 @@ async def analyze_log_file(
             log_text.count("\n") + 1,
         )
 
-        insights, context_used = await analyze_logs(log_text, model, use_kg)
+        # Preprocess / filter large logs to prevent timeouts and LLM thrashing
+        processed_text, was_filtered, filter_status = preprocess_log_text(log_text)
+        if was_filtered:
+            logger.info("Log pre-filtering: %s", filter_status)
+
+        insights, context_used = await analyze_logs(processed_text, model, use_kg)
+
+        if was_filtered:
+            filter_note = (
+                f"> [!NOTE]\n"
+                f"> **Log Pre-filtering Applied**: The log file was too large ({len(content) / 1024 / 1024:.1f} MB) "
+                f"to process sequentially in full. It was automatically filtered down to {len(processed_text) / 1024:.1f} KB "
+                f"of relevant error, warning, and stacktrace contexts to prevent timeouts and optimize analysis.\n\n"
+            )
+            insights = filter_note + insights
 
         # Extract entities from analysis and add to knowledge graph
         kg_update = {}
@@ -324,14 +393,22 @@ async def list_models():
                 "modified_at": m.get("modified_at", ""),
             })
 
-        return {"models": models, "default": DEFAULT_MODEL}
+        return {
+            "models": models,
+            "default": DEFAULT_MODEL,
+            "max_file_size_mb": MAX_FILE_SIZE_MB,
+            "ollama_connected": True
+        }
 
     except Exception as e:
         logger.warning("Could not connect to Ollama: %s", e)
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Cannot connect to Ollama. Is it running?"},
-        )
+        return {
+            "models": [],
+            "default": DEFAULT_MODEL,
+            "max_file_size_mb": MAX_FILE_SIZE_MB,
+            "ollama_connected": False,
+            "error": "Cannot connect to Ollama. Is it running?"
+        }
 
 
 @app.get("/health")

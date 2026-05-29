@@ -946,6 +946,7 @@
         const btnStartRestructure = document.getElementById('btnStartRestructure');
 
         let selectedFiles = []; // Holds list of File objects
+        let maxFileSizeMB = 10; // Dynamic default limit, loaded from server
 
         // =============================================
         // Tabs Switching Logic
@@ -974,8 +975,18 @@
                 if (!resp.ok) throw new Error('Ollama not reachable');
                 const data = await resp.json();
 
+                if (data.max_file_size_mb) {
+                    maxFileSizeMB = data.max_file_size_mb;
+                    // Update dropzone hint text dynamically
+                    document.querySelector('.dropzone-hint').textContent = `Supports .txt, .log, .csv — Max ${maxFileSizeMB} MB per file`;
+                }
+
                 modelSelect.innerHTML = '';
-                if (data.models && data.models.length > 0) {
+                if (data.ollama_connected === false) {
+                    modelSelect.innerHTML = '<option value="">Ollama offline</option>';
+                    statusDot.className = 'status-dot offline';
+                    statusText.textContent = 'Start Ollama first';
+                } else if (data.models && data.models.length > 0) {
                     data.models.forEach(m => {
                         const opt = document.createElement('option');
                         opt.value = m.name;
@@ -1052,8 +1063,8 @@
                     continue;
                 }
                 
-                if (file.size > 10 * 1024 * 1024) {
-                    showError(`File "${file.name}" too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max: 10 MB.`);
+                if (file.size > maxFileSizeMB * 1024 * 1024) {
+                    showError(`File "${file.name}" too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max: ${maxFileSizeMB} MB.`);
                     continue;
                 }
                 
