@@ -49,3 +49,6 @@ data/knowledge_graph/
 data/*.txt
 data/*.csv
 !data/sample_log.txt
+
+# Internal Documentation
+implementation_plan.md
