@@ -9,7 +9,7 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from db.models import AnalysisSession, LogFile
+from backend.db.models import AnalysisSession, LogFile
 
 
 def create_session(db: Session, session_id: str) -> AnalysisSession:
