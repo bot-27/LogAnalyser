@@ -230,8 +230,13 @@ async def analyze_and_feed_kg(log_text: str, filename: str, model: str | None, s
             if sem:
                 async with sem:
                     logger.info("Deep KG Scan: Analyzing chunk %d/%d …", idx, len(chunks))
+                    
+                    # Pass 1: Deterministic Extraction
+                    kg_manager.add_deterministic_entities(chunk, filename)
+                    
                     result = await llm.ainvoke(formatted_prompt)
             else:
+                kg_manager.add_deterministic_entities(chunk, filename)
                 result = await llm.ainvoke(formatted_prompt)
             
             # Feed immediately to KG
@@ -323,10 +328,16 @@ async def root():
         return f.read()
 
 
-async def run_kg_update_background(insights: str, filename: str, model: str | None, service_name: str | None):
+async def run_kg_update_background(insights: str, filename: str, model: str | None, service_name: str | None, raw_text: str | None = None):
     """Asynchronously update the knowledge graph in the background."""
     try:
         kg_manager = get_kg_manager(service_name)
+        
+        # Pass 1: Deterministic extraction from raw logs
+        if raw_text:
+            kg_manager.add_deterministic_entities(raw_text, filename)
+            
+        # Pass 3: Semantic extraction from AI analysis
         await kg_manager.add_analysis_entities(
             analysis_text=insights,
             filename=filename,
@@ -438,6 +449,7 @@ async def analyze_log_file(
             filename=filename,
             model=model,
             service_name=service_name,
+            raw_text=processed_text,
         )
 
         return {

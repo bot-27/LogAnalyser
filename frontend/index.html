@@ -1367,8 +1367,15 @@
                 
                 loadingDetail.textContent = `Processing batch analysis in background...`;
                 
+                let pollAttempts = 0;
                 while (!isDone) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    let pollInterval = 2000; // default 2 seconds
+                    if (pollAttempts >= 5) pollInterval = 10000; // max 10 seconds after 5 attempts
+                    else if (pollAttempts >= 2) pollInterval = 5000; // 5 seconds after 2 attempts
+
+                    await new Promise(resolve => setTimeout(resolve, pollInterval));
+                    pollAttempts++;
+                    
                     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
                     
                     const statusResp = await fetch(`/status/${sessionId}`, { signal });
