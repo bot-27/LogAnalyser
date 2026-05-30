@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import shutil
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -30,26 +31,36 @@ You are a knowledge-graph extraction engine.
 Given the following log analysis text, extract entities and relationships.
 
 **Entity types** (use exactly these labels):
-- service   — any application, microservice, database, or infrastructure component mentioned
-- error     — specific error types, exceptions, or failure modes
-- root_cause — underlying causes identified in the analysis
-- pattern   — recurring patterns or trends (e.g., "retry storm", "cascading failure")
-- fix       — suggested fixes or remediation steps
+- service     — any application, microservice, database, or infrastructure component mentioned
+- event       — significant system events (e.g., startup, shutdown, state change)
+- transaction — business or technical workflows (e.g., payment, login)
+- config      — configuration states or environment settings
+- error       — specific error types, exceptions, or failure modes
+- root_cause   — underlying causes identified in the analysis
+- pattern     — recurring patterns or trends (e.g., "retry storm", "cascading failure")
+- fix         — suggested fixes or remediation steps
 
 **Relationship types** (use exactly these labels):
-- caused_by   — entity A was caused by entity B
-- relates_to  — entity A is related to entity B
-- fixed_by    — entity A can be fixed by entity B
-- observed_in — entity A was observed in entity B (e.g., error observed in service)
-- depends_on  — entity A depends on entity B
+- caused_by      — entity A was caused by entity B
+- relates_to     — entity A is related to entity B
+- fixed_by       — entity A can be fixed by entity B
+- observed_in    — entity A was observed in entity B (e.g., error observed in service)
+- depends_on     — entity A depends on entity B
+- calls          — entity A calls entity B
+- transitions_to — entity A transitions to entity B
+- configured_with— entity A is configured with entity B
+
+**Developer Insights:**
+Consider the following developer insights to guide your extraction priority:
+{developer_insights}
 
 Return ONLY valid JSON in this exact format (no markdown, no extra text):
 {{
   "entities": [
-    {{"id": "unique_snake_case_id", "type": "service|error|root_cause|pattern|fix", "label": "Human Readable Name", "description": "Brief description"}}
+    {{"id": "unique_snake_case_id", "type": "service|event|transaction|config|error|root_cause|pattern|fix", "label": "Human Readable Name", "description": "Brief description"}}
   ],
   "relationships": [
-    {{"source": "entity_id_1", "target": "entity_id_2", "type": "caused_by|relates_to|fixed_by|observed_in|depends_on"}}
+    {{"source": "entity_id_1", "target": "entity_id_2", "type": "caused_by|relates_to|fixed_by|observed_in|depends_on|calls|transitions_to|configured_with"}}
   ]
 }}
 
@@ -69,7 +80,8 @@ Below is the current knowledge graph in JSON format. Restructure it according to
 2. Remove weak or irrelevant relationships
 3. Strengthen entity descriptions based on accumulated evidence
 4. Re-categorize entities if their type is wrong
-5. Apply any additional instructions from the developer
+5. Prune low-value generic event nodes if they don't connect to important transactions or errors
+6. Apply any additional instructions from the developer
 
 **Developer instructions:**
 {instructions}
@@ -83,10 +95,10 @@ Below is the current knowledge graph in JSON format. Restructure it according to
 Return ONLY valid JSON in this exact format (no markdown, no extra text):
 {{
   "entities": [
-    {{"id": "unique_snake_case_id", "type": "service|error|root_cause|pattern|fix|insight", "label": "Human Readable Name", "description": "Brief description", "observation_count": 1}}
+    {{"id": "unique_snake_case_id", "type": "service|event|transaction|config|error|root_cause|pattern|fix|insight", "label": "Human Readable Name", "description": "Brief description", "observation_count": 1}}
   ],
   "relationships": [
-    {{"source": "entity_id_1", "target": "entity_id_2", "type": "caused_by|relates_to|fixed_by|observed_in|depends_on"}}
+    {{"source": "entity_id_1", "target": "entity_id_2", "type": "caused_by|relates_to|fixed_by|observed_in|depends_on|calls|transitions_to|configured_with"}}
   ]
 }}
 """
@@ -187,7 +199,68 @@ class KnowledgeGraphManager:
             return {"entities": [], "relationships": []}
 
     # ------------------------------------------------------------------
-    # Entity extraction (called after each analysis)
+    # Pass 1: Deterministic Entity extraction
+    # ------------------------------------------------------------------
+    def add_deterministic_entities(self, raw_log_text: str, filename: str) -> dict:
+        """
+        Pass 1: Deterministic extraction of structured data from raw logs using regex.
+        Extracts IPs and log levels and creates 100% confidence nodes and edges.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        added_nodes = 0
+        added_edges = 0
+
+        # Patterns
+        ip_pattern = re.compile(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b')
+        level_pattern = re.compile(r'\b(ERROR|WARN|WARNING|INFO|DEBUG|FATAL|CRITICAL)\b', re.IGNORECASE)
+
+        lines = raw_log_text.splitlines()
+        for line in lines:
+            ips = ip_pattern.findall(line)
+            levels = level_pattern.findall(line)
+
+            for ip in ips:
+                eid = f"ip_{ip.replace('.', '_')}"
+                if not self.graph.has_node(eid):
+                    self.graph.add_node(
+                        eid, type="config", label=ip, description=f"IP Address {ip}",
+                        observation_count=1, first_seen=now, last_seen=now, sources=[filename],
+                        provenance="Extracted"
+                    )
+                    added_nodes += 1
+                else:
+                    attrs = self.graph.nodes[eid]
+                    attrs["observation_count"] = attrs.get("observation_count", 1) + 1
+                    attrs["last_seen"] = now
+                    if filename not in attrs.get("sources", []):
+                        attrs.setdefault("sources", []).append(filename)
+
+                for lvl in levels:
+                    lvl_upper = lvl.upper()
+                    lvl_eid = f"level_{lvl_upper.lower()}"
+                    if not self.graph.has_node(lvl_eid):
+                        self.graph.add_node(
+                            lvl_eid, type="event", label=f"Level: {lvl_upper}", description=f"Log Level {lvl_upper}",
+                            observation_count=1, first_seen=now, last_seen=now, sources=[filename],
+                            provenance="Extracted"
+                        )
+                        added_nodes += 1
+                    else:
+                        self.graph.nodes[lvl_eid]["observation_count"] = self.graph.nodes[lvl_eid].get("observation_count", 1) + 1
+
+                    if not self.graph.has_edge(eid, lvl_eid):
+                        self.graph.add_edge(eid, lvl_eid, type="observed_in", created=now, provenance="Extracted")
+                        added_edges += 1
+
+        if added_nodes > 0 or added_edges > 0:
+            self.save()
+
+        summary = {"added_nodes": added_nodes, "added_edges": added_edges}
+        logger.info("Deterministic graph update from '%s': %s", filename, summary)
+        return summary
+
+    # ------------------------------------------------------------------
+    # Pass 3: Semantic Entity extraction (called after each analysis)
     # ------------------------------------------------------------------
     async def add_analysis_entities(
         self,
@@ -199,9 +272,17 @@ class KnowledgeGraphManager:
         Extract entities from an analysis result and merge into the graph.
         Returns summary of what was added.
         """
+        # Gather developer insights from the graph
+        insights = []
+        for nid, attrs in self.graph.nodes(data=True):
+            if attrs.get("type") == "insight":
+                insights.append(attrs.get("description", ""))
+        insights_text = "\\n".join(f"- {txt}" for txt in insights) if insights else "No specific developer insights available."
+
         prompt = ENTITY_EXTRACTION_PROMPT.format(
             analysis_text=analysis_text,
             filename=filename,
+            developer_insights=insights_text,
         )
 
         data = await self._extract_json_from_llm(prompt, model)
@@ -238,6 +319,7 @@ class KnowledgeGraphManager:
                     first_seen=now,
                     last_seen=now,
                     sources=[filename],
+                    provenance="Inferred",
                 )
                 added_nodes += 1
 
@@ -247,7 +329,7 @@ class KnowledgeGraphManager:
             rtype = rel.get("type", "relates_to")
             if src and tgt and self.graph.has_node(src) and self.graph.has_node(tgt):
                 if not self.graph.has_edge(src, tgt):
-                    self.graph.add_edge(src, tgt, type=rtype, created=now)
+                    self.graph.add_edge(src, tgt, type=rtype, created=now, provenance="Inferred")
                     added_edges += 1
 
         self.save()
@@ -291,6 +373,10 @@ class KnowledgeGraphManager:
 
             # Boost by observation count (more established = more relevant)
             score += min(attrs.get("observation_count", 1) - 1, 5)
+
+            # Heavily boost developer insights so they are always prioritized
+            if attrs.get("type") == "insight":
+                score += 10
 
             if score > 0:
                 scored_nodes.append((node_id, attrs, score))
@@ -432,6 +518,7 @@ class KnowledgeGraphManager:
             first_seen=now.isoformat(),
             last_seen=now.isoformat(),
             sources=["developer"],
+            provenance="Developer_Insight",
         )
 
         linked = 0

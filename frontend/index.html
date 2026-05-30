@@ -802,6 +802,14 @@
                     </select>
                     <span class="status-text" id="statusText">Connecting…</span>
                 </div>
+                
+                <!-- Service Name -->
+                <div class="config-row" style="margin-top: -12px;">
+                    <label for="serviceNameInput">
+                        🏷️ Service Name
+                    </label>
+                    <input type="text" id="serviceNameInput" class="model-select" style="background-image: none; padding-right: 16px;" placeholder="e.g. auth-service (Optional)">
+                </div>
 
                 <!-- KG Toggle Checkbox -->
                 <div class="config-row" style="margin-top: -12px; margin-bottom: 16px;">
@@ -861,6 +869,9 @@
                 <div class="spinner"></div>
                 <div class="loading-text">Analyzing your logs…</div>
                 <div class="loading-detail" id="loadingDetail">Sending to local LLM</div>
+                <div id="progressContainer" style="display: none; width: 100%; height: 8px; background: rgba(255, 255, 255, 0.1); border-radius: 4px; margin-top: 12px; overflow: hidden;">
+                    <div id="progressFill" style="width: 0%; height: 100%; background: var(--accent-gradient); transition: width 0.3s ease;"></div>
+                </div>
                 <button class="btn-cancel" id="cancelBtn" style="margin-top: 16px; border: 1px solid rgba(248, 113, 113, 0.4); color: var(--error); background: rgba(248, 113, 113, 0.05); font-weight: 500; font-size: 0.85rem; padding: 8px 16px; display: flex; align-items: center; gap: 8px; transition: var(--transition);" onmouseover="this.style.background='rgba(248, 113, 113, 0.15)'" onmouseout="this.style.background='rgba(248, 113, 113, 0.05)'">
                     🛑 Stop Analysis
                 </button>
@@ -1018,6 +1029,7 @@
         let selectedFiles = []; // Holds list of File objects
         let maxFileSizeMB = 10; // Dynamic default limit, loaded from server
         let analysisAbortController = null;
+        let currentSessionId = null;
         let systemInfoFile = null;
         let currentGraphNodes = [];
 
@@ -1245,6 +1257,9 @@
         // =============================================
         analyzeBtn.addEventListener('click', uploadAndAnalyze);
         cancelBtn.addEventListener('click', () => {
+            if (currentSessionId) {
+                fetch(`/status/${currentSessionId}/cancel`, { method: 'POST' }).catch(console.error);
+            }
             if (analysisAbortController) {
                 analysisAbortController.abort();
             }
@@ -1293,13 +1308,17 @@
             
             return item;
         }
-
         async function uploadAndAnalyze() {
             if (selectedFiles.length === 0) return;
 
             hideError();
             resultsCard.classList.remove('show');
             loadingSection.classList.add('show');
+            
+            // Reset progress bar
+            document.getElementById('progressContainer').style.display = 'none';
+            document.getElementById('progressFill').style.width = '0%';
+            
             analyzeBtn.disabled = true;
             
             const useKg = document.getElementById('useKgCheckbox').checked;
@@ -1308,90 +1327,101 @@
             const totalStartTime = Date.now();
             resultsContent.innerHTML = ''; // Clear prior results
             
-            let successCount = 0;
-            let errorCount = 0;
-
             analysisAbortController = new AbortController();
             const { signal } = analysisAbortController;
 
             try {
+                loadingDetail.textContent = `Uploading ${selectedFiles.length} file(s)...`;
+                
+                const formData = new FormData();
                 for (let i = 0; i < selectedFiles.length; i++) {
-                    const file = selectedFiles[i];
-                    loadingDetail.textContent = `[${i + 1}/${selectedFiles.length}] Analyzing ${file.name}...`;
-                    
-                    const fileStartTime = Date.now();
-                    
-                    try {
-                        const formData = new FormData();
-                        formData.append('file', file);
-                        if (systemInfoFile) {
-                            formData.append('system_info', systemInfoFile);
-                        }
-
-                        let url = `/analyze?use_kg=${useKg}`;
-                        if (modelVal) {
-                            url += `&model=${encodeURIComponent(modelVal)}`;
-                        }
-
-                        const response = await fetch(url, {
-                            method: 'POST',
-                            body: formData,
-                            signal: signal
-                        });
-
-                        const data = await response.json();
-
-                        if (!response.ok) {
-                            throw new Error(data.error || `Server error (${response.status})`);
-                        }
-
-                        const fileElapsed = ((Date.now() - fileStartTime) / 1000).toFixed(1);
-                        successCount++;
-                        
-                        const accordionItem = createAccordionItem(
-                            file.name,
-                            data.analysis,
-                            fileElapsed,
-                            data.knowledge_graph && data.knowledge_graph.context_used
-                        );
-                        resultsContent.appendChild(accordionItem);
-
-                    } catch (fileErr) {
-                        if (fileErr.name === 'AbortError') {
-                            throw fileErr; // Re-throw to abort batch analysis entirely
-                        }
-                        errorCount++;
-                        const errorMsg = `Error analyzing file: ${fileErr.message}`;
-                        const errorItem = createAccordionItem(
-                            file.name,
-                            `### ❌ Analysis Failed\n\n${errorMsg}`,
-                            "0.0",
-                            false
-                        );
-                        resultsContent.appendChild(errorItem);
-                    }
+                    formData.append('files', selectedFiles[i]);
+                }
+                if (systemInfoFile) {
+                    formData.append('system_info', systemInfoFile);
                 }
                 
+                const serviceName = document.getElementById('serviceNameInput').value.trim();
+                if (serviceName) {
+                    formData.append('service_name', serviceName);
+                }
+
+                const uploadResponse = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData,
+                    signal: signal
+                });
+
+                const uploadData = await uploadResponse.json();
+
+                if (!uploadResponse.ok) {
+                    throw new Error(uploadData.error || `Upload failed (${uploadResponse.status})`);
+                }
+
+                const sessionId = uploadData.session_id;
+                currentSessionId = sessionId;
+                
+                // Start polling status
+                let isDone = false;
+                let finalData = null;
+                
+                loadingDetail.textContent = `Processing batch analysis in background...`;
+                
+                let pollAttempts = 0;
+                while (!isDone) {
+                    let pollInterval = 2000; // default 2 seconds
+                    if (pollAttempts >= 5) pollInterval = 10000; // max 10 seconds after 5 attempts
+                    else if (pollAttempts >= 2) pollInterval = 5000; // 5 seconds after 2 attempts
+
+                    await new Promise(resolve => setTimeout(resolve, pollInterval));
+                    pollAttempts++;
+                    
+                    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+                    
+                    const statusResp = await fetch(`/status/${sessionId}`, { signal });
+                    const statusData = await statusResp.json();
+                    
+                    if (!statusResp.ok) {
+                        throw new Error(statusData.error || `Status check failed (${statusResp.status})`);
+                    }
+
+                    if (statusData.status === 'PROCESSING' && statusData.verdict) {
+                        if (statusData.verdict.startsWith('PROGRESS:')) {
+                            const pct = parseInt(statusData.verdict.split(':')[1]);
+                            document.getElementById('progressContainer').style.display = 'block';
+                            document.getElementById('progressFill').style.width = pct + '%';
+                            loadingDetail.textContent = `Analyzing context... ${pct}%`;
+                        } else {
+                            loadingDetail.textContent = statusData.verdict;
+                        }
+                    }
+                    
+                    if (statusData.status === 'COMPLETED') {
+                        isDone = true;
+                        finalData = statusData;
+                    } else if (statusData.status === 'FAILED') {
+                        throw new Error(statusData.verdict || "Analysis failed in background");
+                    }
+                }
+
                 const totalElapsed = ((Date.now() - totalStartTime) / 1000).toFixed(1);
-                resultsMeta.textContent = `${totalElapsed}s · ${modelVal || 'default'} · ${successCount} ok${errorCount > 0 ? `, ${errorCount} err` : ''}`;
+                
+                const accordionItem = createAccordionItem(
+                    `Batch Analysis (${selectedFiles.length} files)`,
+                    finalData.verdict,
+                    totalElapsed,
+                    true // context used
+                );
+                resultsContent.appendChild(accordionItem);
+                
+                resultsMeta.textContent = `${totalElapsed}s · ${modelVal || 'default'} · completed`;
                 resultsCard.classList.add('show');
                 
-                // Refresh Graph immediately and with polling delays to capture background task completion
                 fetchKnowledgeGraph();
-                setTimeout(fetchKnowledgeGraph, 5000);
-                setTimeout(fetchKnowledgeGraph, 15000);
 
             } catch (err) {
                 if (err.name === 'AbortError') {
                     showError("Analysis stopped by user.");
-                    if (successCount > 0 || errorCount > 0) {
-                        const totalElapsed = ((Date.now() - totalStartTime) / 1000).toFixed(1);
-                        resultsMeta.textContent = `${totalElapsed}s · Stopped by user · ${successCount} ok${errorCount > 0 ? `, ${errorCount} err` : ''}`;
-                        resultsCard.classList.add('show');
-                        fetchKnowledgeGraph();
-                        setTimeout(fetchKnowledgeGraph, 5000);
-                        setTimeout(fetchKnowledgeGraph, 15000);
-                    }
                 } else {
                     showError(err.message);
                 }
@@ -1399,6 +1429,7 @@
                 loadingSection.classList.remove('show');
                 analyzeBtn.disabled = false;
                 analysisAbortController = null;
+                currentSessionId = null;
             }
         }
 
@@ -1428,8 +1459,10 @@
         };
 
         async function fetchKnowledgeGraph() {
+            const serviceName = document.getElementById('serviceNameInput').value.trim();
+            const qs = serviceName ? `?service_name=${encodeURIComponent(serviceName)}` : '';
             try {
-                const summaryResp = await fetch('/knowledge-graph');
+                const summaryResp = await fetch(`/knowledge-graph${qs}`);
                 if (!summaryResp.ok) return;
                 const summary = await summaryResp.json();
 
@@ -1455,7 +1488,7 @@
                 
                 kgStats.textContent = `${summary.total_nodes} nodes · ${summary.total_edges} edges`;
 
-                const dataResp = await fetch('/knowledge-graph/data');
+                const dataResp = await fetch(`/knowledge-graph/data${qs}`);
                 if (!dataResp.ok) return;
                 const graphData = await dataResp.json();
                 
@@ -1626,6 +1659,7 @@
         }
 
         btnExplainKg.addEventListener('click', async () => {
+            const serviceName = document.getElementById('serviceNameInput').value.trim();
             showModal(explainModal);
             explainModalContent.innerHTML = `
                 <div style="display: flex; flex-direction: column; align-items: center; padding: 30px; gap: 12px;">
@@ -1638,7 +1672,7 @@
                 const resp = await fetch('/knowledge-graph/explain', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ model: modelSelect.value })
+                    body: JSON.stringify({ model: modelSelect.value, service_name: serviceName })
                 });
                 
                 const data = await resp.json();
@@ -1661,6 +1695,7 @@
         btnSaveInsight.addEventListener('click', async () => {
             const text = document.getElementById('insightText').value;
             const related = document.getElementById('insightRelated').value.split(',').map(s => s.trim()).filter(Boolean);
+            const serviceName = document.getElementById('serviceNameInput').value.trim();
             
             if (!text) return alert("Insight text required");
             
@@ -1671,7 +1706,7 @@
                 const resp = await fetch('/knowledge-graph/insight', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ insight: text, related_entities: related })
+                    body: JSON.stringify({ insight: text, related_entities: related, service_name: serviceName })
                 });
                 if (resp.ok) {
                     document.getElementById('insightText').value = '';
@@ -1692,6 +1727,7 @@
 
         btnStartRestructure.addEventListener('click', async () => {
             const text = document.getElementById('restructureText').value;
+            const serviceName = document.getElementById('serviceNameInput').value.trim();
             btnStartRestructure.disabled = true;
             btnStartRestructure.textContent = "Restructuring... (may take a minute)";
             
@@ -1699,7 +1735,7 @@
                 const resp = await fetch('/knowledge-graph/restructure', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ instructions: text, model: modelSelect.value })
+                    body: JSON.stringify({ instructions: text, model: modelSelect.value, service_name: serviceName })
                 });
                 if (resp.ok) {
                     hideModals();
@@ -1714,9 +1750,11 @@
         });
 
         btnClearKg.addEventListener('click', async () => {
-            if (confirm("Are you sure you want to clear the entire knowledge graph?")) {
+            const serviceName = document.getElementById('serviceNameInput').value.trim();
+            const qs = serviceName ? `?service_name=${encodeURIComponent(serviceName)}` : '';
+            if (confirm(`Are you sure you want to clear the knowledge graph for '${serviceName || 'default'}'?`)) {
                 try {
-                    await fetch('/knowledge-graph', { method: 'DELETE' });
+                    await fetch(`/knowledge-graph${qs}`, { method: 'DELETE' });
                     fetchKnowledgeGraph();
                 } catch(e) {}
             }
