@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from db.models import AnalysisSession, LogFile
+from backend.db.models import AnalysisSession, LogFile
 
 
 def get_session_by_id(db: Session, session_id: str) -> AnalysisSession | None:
