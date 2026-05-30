@@ -50,5 +50,9 @@ def save_result(
     db.commit()
 
 
+def commit(db: Session) -> None:
+    db.commit()
+
+
 def rollback(db: Session) -> None:
     db.rollback()

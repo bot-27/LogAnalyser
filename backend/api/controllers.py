@@ -66,6 +66,13 @@ def handle_get_status(session_id: str, db: Session) -> dict:
     return services.get_session_status(session_id, db)
 
 
+def handle_cancel_session(session_id: str, db: Session) -> dict:
+    if not session_id or not session_id.strip():
+        raise ValidationError("session_id is required")
+
+    return services.cancel_session(session_id, db)
+
+
 async def handle_list_models() -> dict:
     return await services.list_models(MAX_FILE_SIZE_MB)
 

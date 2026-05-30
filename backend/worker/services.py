@@ -100,18 +100,48 @@ def run_analysis(session_id: str, db: Session) -> None:
         # Retrieve knowledge graph manager (use default for now)
         kg_manager = get_kg_manager("default")
 
+        def is_cancelled() -> bool:
+            db.expire_all()
+            current_session = repositories.get_session_by_id(db, session_id)
+            return current_session is not None and current_session.status == "CANCELLED"
+
+        def update_progress(msg: str) -> None:
+            db.expire_all()
+            current_session = repositories.get_session_by_id(db, session_id)
+            if current_session and current_session.status == "PROCESSING":
+                current_session.verdict = msg
+                repositories.commit(db)
+
         # Run async analysis pipeline synchronously in this thread
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            verdict, context_used, msg = loop.run_until_complete(
-                analyze_logs(combined_text, model=None, use_kg=True, system_info=None, kg_manager=kg_manager)
+            from backend.app import preprocess_log_text, analyze_and_feed_kg
+            
+            # FAST PATH: Preprocess to shrink the file
+            preprocessed_text, is_truncated, _ = preprocess_log_text(combined_text, max_chars=40000)
+            
+            verdict, context_used = loop.run_until_complete(
+                analyze_logs(preprocessed_text, model=None, use_kg=True, system_info=None, kg_manager=kg_manager, cancel_check=is_cancelled, progress_callback=update_progress)
             )
-            # Update knowledge graph with the insights
-            loop.run_until_complete(
-                kg_manager.add_analysis_entities(verdict, combined_filename, model=None)
+            
+            # Immediately mark as COMPLETED so UI stops polling
+            current_session = repositories.get_session_by_id(db, session_id)
+            repositories.save_result(
+                db,
+                current_session,
+                verdict=verdict,
+                graph_data=None,
+                status="COMPLETED",
             )
+            
+            # SLOW PATH: Deep KG Scan over the full file (takes hours in background)
+            if True and is_truncated:
+                loop.run_until_complete(
+                    analyze_and_feed_kg(combined_text, "Batch Analysis", None, None, kg_manager)
+                )
+
         finally:
             loop.close()
 
@@ -122,6 +152,11 @@ def run_analysis(session_id: str, db: Session) -> None:
         )
         logger.info("Session %s completed successfully", session_id)
 
+    except asyncio.CancelledError:
+        repositories.rollback(db)
+        logger.info("Analysis for session %s was cancelled by user", session_id)
+        # Already marked CANCELLED in DB by the API, so no need to save FAILED state.
+        
     except Exception as exc:
         repositories.rollback(db)
         logger.exception("Analysis failed for session %s", session_id)

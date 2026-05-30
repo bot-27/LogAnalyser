@@ -88,6 +88,26 @@ async def status(
         )
 
 
+@router.post("/status/{session_id}/cancel")
+async def cancel_status(
+    session_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Cancel an ongoing analysis session."""
+    try:
+        return controllers.handle_cancel_session(session_id, db)
+    except ValidationError as exc:
+        return JSONResponse(  # type: ignore[return-value]
+            status_code=exc.status_code,
+            content={"error": exc.message},
+        )
+    except NotFoundError as exc:
+        return JSONResponse(  # type: ignore[return-value]
+            status_code=404,
+            content={"error": exc.message},
+        )
+
+
 # ------------------------------------------------------------------
 # Knowledge Graph and Models routes
 # ------------------------------------------------------------------

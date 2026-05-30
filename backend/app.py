@@ -14,6 +14,8 @@ Architecture: FastAPI receives uploaded log file → splits into chunks →
 import logging
 import os
 import httpx
+import asyncio
+from typing import Callable
 
 # pyrefly: ignore [missing-import]
 from fastapi import FastAPI, UploadFile, File, Body, BackgroundTasks
@@ -82,16 +84,17 @@ def get_kg_manager(service_name: str | None) -> KnowledgeGraphManager:
 # Prompt Template (from the article — SRE role with 4 analysis points)
 # ---------------------------------------------------------------------------
 log_analysis_prompt_text = """
-You are a senior site reliability engineer.
+You are a senior site reliability engineer and systems architect.
 
 {system_section}
 Analyze the following application logs.
 
-1. Identify any explicit errors, failures, or exceptions.
-2. Detect non-error anomalies (e.g., memory leaks, CPU overutilization, latency spikes, or resource exhaustion).
-3. Predict potential future issues or cascading failures based on suspicious patterns.
-4. Explain the likely root cause in simple terms.
-5. Suggest practical next steps to fix, optimize, or investigate.
+1. Summarize the normal application flow, active transactions, and architectural state.
+2. Identify any explicit errors, failures, or exceptions.
+3. Detect non-error anomalies (e.g., memory leaks, latency spikes, resource exhaustion).
+4. Predict potential future issues or cascading failures based on suspicious patterns.
+5. Explain the likely root cause of any issues in simple terms.
+6. Suggest practical next steps to fix, optimize, or investigate.
 
 {prior_knowledge}
 
@@ -118,7 +121,26 @@ def split_logs(log_text: str):
 # ---------------------------------------------------------------------------
 # Log Analysis (enhanced with knowledge graph context)
 # ---------------------------------------------------------------------------
-async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = True, system_info: str | None = None, kg_manager: KnowledgeGraphManager | None = None):
+async def process_chunk(llm, prompt: str, chunk_idx: int, total_chunks: int, cancel_check: Callable[[], bool] | None = None, progress_callback: Callable[[str], None] | None = None, sem: asyncio.Semaphore | None = None) -> str:
+    if cancel_check and cancel_check():
+        raise asyncio.CancelledError("Analysis cancelled by user")
+    
+    if sem:
+        async with sem:
+            logger.info("Analyzing chunk %d/%d …", chunk_idx, total_chunks)
+            result = await llm.ainvoke(prompt)
+    else:
+        logger.info("Analyzing chunk %d/%d …", chunk_idx, total_chunks)
+        result = await llm.ainvoke(prompt)
+        
+    if cancel_check and cancel_check():
+        raise asyncio.CancelledError("Analysis cancelled by user")
+    if progress_callback:
+        progress_callback("increment")
+    return result.content
+
+
+async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = True, system_info: str | None = None, kg_manager: KnowledgeGraphManager | None = None, cancel_check: Callable[[], bool] | None = None, progress_callback: Callable[[str], None] | None = None):
     """Analyze logs by splitting and processing each chunk, with KG context and optional system info."""
     selected_model = model or DEFAULT_MODEL
 
@@ -154,21 +176,80 @@ async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = T
     chunks = split_logs(log_text)
     logger.info("Split logs into %d chunk(s), using model '%s'", len(chunks), selected_model)
 
-    combined_analysis = []
+    completed_chunks = 0
+    sem = asyncio.Semaphore(3)
+    
+    def local_progress(msg: str) -> None:
+        nonlocal completed_chunks
+        completed_chunks += 1
+        if progress_callback:
+            pct = int((completed_chunks / len(chunks)) * 100) if len(chunks) > 0 else 100
+            progress_callback(f"PROGRESS:{pct}")
 
+    tasks = []
     for i, chunk in enumerate(chunks, 1):
-        logger.info("Analyzing chunk %d/%d …", i, len(chunks))
         formatted_prompt = log_analysis_prompt_text.format(
             log_data=chunk,
             prior_knowledge=prior_section,
             system_section=system_section,
         )
-        result = await llm.ainvoke(formatted_prompt)
-        combined_analysis.append(result.content)
+        tasks.append(process_chunk(llm, formatted_prompt, i, len(chunks), cancel_check, local_progress, sem))
+        
+    if progress_callback:
+        progress_callback("PROGRESS:0")
+
+    results = await asyncio.gather(*tasks)
+    combined_analysis = list(results)
 
     full_analysis = "\n\n---\n\n".join(combined_analysis)
 
     return full_analysis, context_used
+
+
+async def analyze_and_feed_kg(log_text: str, filename: str, model: str | None, service_name: str | None, kg_manager: KnowledgeGraphManager):
+    """Deep background scan: process chunks slowly and feed directly to the Knowledge Graph."""
+    selected_model = model or DEFAULT_MODEL
+    llm = ChatOllama(
+        model=selected_model,
+        temperature=0.0,
+        base_url=OLLAMA_BASE_URL,
+    )
+
+    chunks = split_logs(log_text)
+    logger.info("Deep KG Scan: Split logs into %d chunk(s), using model '%s'", len(chunks), selected_model)
+
+    sem = asyncio.Semaphore(3)
+    
+    async def process_and_feed(chunk: str, idx: int):
+        formatted_prompt = log_analysis_prompt_text.format(
+            log_data=chunk,
+            prior_knowledge="Building comprehensive graph from full logs.",
+            system_section="",
+        )
+        try:
+            if sem:
+                async with sem:
+                    logger.info("Deep KG Scan: Analyzing chunk %d/%d …", idx, len(chunks))
+                    result = await llm.ainvoke(formatted_prompt)
+            else:
+                result = await llm.ainvoke(formatted_prompt)
+            
+            # Feed immediately to KG
+            await kg_manager.add_analysis_entities(
+                analysis_text=result.content,
+                filename=filename,
+                model=selected_model,
+            )
+            logger.info("Deep KG Scan: Chunk %d/%d added to graph.", idx, len(chunks))
+        except Exception as e:
+            logger.error("Deep KG Scan: Error on chunk %d/%d: %s", idx, len(chunks), e)
+
+    tasks = []
+    for i, chunk in enumerate(chunks, 1):
+        tasks.append(process_and_feed(chunk, i))
+
+    await asyncio.gather(*tasks)
+    logger.info("Deep KG Scan: Completed all %d chunks.", len(chunks))
 
 
 def preprocess_log_text(log_text: str, max_chars: int = 10000) -> tuple[str, bool, str]:
@@ -184,10 +265,11 @@ def preprocess_log_text(log_text: str, max_chars: int = 10000) -> tuple[str, boo
     lines = log_text.splitlines()
     num_lines = len(lines)
     
-    # Compile a fast case-insensitive regex for error, performance, and resource keywords
+    # Compile a fast case-insensitive regex for error, performance, resource, and architectural lifecycle keywords
     error_pattern = re.compile(
         r"error|fail|exception|critical|fatal|warn|severe|stacktrace|traceback|caused by|"
-        r"memory|cpu|leak|timeout|latency|slow|deadlock|oom|out of memory|stuck|blocked|spike|threshold|garbage collection|gc|exhausted",
+        r"memory|cpu|leak|timeout|latency|slow|deadlock|oom|out of memory|stuck|blocked|spike|threshold|garbage collection|gc|exhausted|"
+        r"start|init|config|connect|listen|request|response|transaction|user|login|auth|success|complete",
         re.IGNORECASE
     )
     matched_indices = set()

@@ -43,6 +43,11 @@ def get_session_by_id(db: Session, session_id: str) -> AnalysisSession | None:
     )
 
 
+def update_status(db: Session, session: AnalysisSession, status: str) -> None:
+    session.status = status
+    db.add(session)
+
+
 def commit(db: Session) -> None:
     db.commit()
 

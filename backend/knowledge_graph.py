@@ -30,26 +30,36 @@ You are a knowledge-graph extraction engine.
 Given the following log analysis text, extract entities and relationships.
 
 **Entity types** (use exactly these labels):
-- service   — any application, microservice, database, or infrastructure component mentioned
-- error     — specific error types, exceptions, or failure modes
-- root_cause — underlying causes identified in the analysis
-- pattern   — recurring patterns or trends (e.g., "retry storm", "cascading failure")
-- fix       — suggested fixes or remediation steps
+- service     — any application, microservice, database, or infrastructure component mentioned
+- event       — significant system events (e.g., startup, shutdown, state change)
+- transaction — business or technical workflows (e.g., payment, login)
+- config      — configuration states or environment settings
+- error       — specific error types, exceptions, or failure modes
+- root_cause   — underlying causes identified in the analysis
+- pattern     — recurring patterns or trends (e.g., "retry storm", "cascading failure")
+- fix         — suggested fixes or remediation steps
 
 **Relationship types** (use exactly these labels):
-- caused_by   — entity A was caused by entity B
-- relates_to  — entity A is related to entity B
-- fixed_by    — entity A can be fixed by entity B
-- observed_in — entity A was observed in entity B (e.g., error observed in service)
-- depends_on  — entity A depends on entity B
+- caused_by      — entity A was caused by entity B
+- relates_to     — entity A is related to entity B
+- fixed_by       — entity A can be fixed by entity B
+- observed_in    — entity A was observed in entity B (e.g., error observed in service)
+- depends_on     — entity A depends on entity B
+- calls          — entity A calls entity B
+- transitions_to — entity A transitions to entity B
+- configured_with— entity A is configured with entity B
+
+**Developer Insights:**
+Consider the following developer insights to guide your extraction priority:
+{developer_insights}
 
 Return ONLY valid JSON in this exact format (no markdown, no extra text):
 {{
   "entities": [
-    {{"id": "unique_snake_case_id", "type": "service|error|root_cause|pattern|fix", "label": "Human Readable Name", "description": "Brief description"}}
+    {{"id": "unique_snake_case_id", "type": "service|event|transaction|config|error|root_cause|pattern|fix", "label": "Human Readable Name", "description": "Brief description"}}
   ],
   "relationships": [
-    {{"source": "entity_id_1", "target": "entity_id_2", "type": "caused_by|relates_to|fixed_by|observed_in|depends_on"}}
+    {{"source": "entity_id_1", "target": "entity_id_2", "type": "caused_by|relates_to|fixed_by|observed_in|depends_on|calls|transitions_to|configured_with"}}
   ]
 }}
 
@@ -69,7 +79,8 @@ Below is the current knowledge graph in JSON format. Restructure it according to
 2. Remove weak or irrelevant relationships
 3. Strengthen entity descriptions based on accumulated evidence
 4. Re-categorize entities if their type is wrong
-5. Apply any additional instructions from the developer
+5. Prune low-value generic event nodes if they don't connect to important transactions or errors
+6. Apply any additional instructions from the developer
 
 **Developer instructions:**
 {instructions}
@@ -83,10 +94,10 @@ Below is the current knowledge graph in JSON format. Restructure it according to
 Return ONLY valid JSON in this exact format (no markdown, no extra text):
 {{
   "entities": [
-    {{"id": "unique_snake_case_id", "type": "service|error|root_cause|pattern|fix|insight", "label": "Human Readable Name", "description": "Brief description", "observation_count": 1}}
+    {{"id": "unique_snake_case_id", "type": "service|event|transaction|config|error|root_cause|pattern|fix|insight", "label": "Human Readable Name", "description": "Brief description", "observation_count": 1}}
   ],
   "relationships": [
-    {{"source": "entity_id_1", "target": "entity_id_2", "type": "caused_by|relates_to|fixed_by|observed_in|depends_on"}}
+    {{"source": "entity_id_1", "target": "entity_id_2", "type": "caused_by|relates_to|fixed_by|observed_in|depends_on|calls|transitions_to|configured_with"}}
   ]
 }}
 """
@@ -199,9 +210,17 @@ class KnowledgeGraphManager:
         Extract entities from an analysis result and merge into the graph.
         Returns summary of what was added.
         """
+        # Gather developer insights from the graph
+        insights = []
+        for nid, attrs in self.graph.nodes(data=True):
+            if attrs.get("type") == "insight":
+                insights.append(attrs.get("description", ""))
+        insights_text = "\\n".join(f"- {txt}" for txt in insights) if insights else "No specific developer insights available."
+
         prompt = ENTITY_EXTRACTION_PROMPT.format(
             analysis_text=analysis_text,
             filename=filename,
+            developer_insights=insights_text,
         )
 
         data = await self._extract_json_from_llm(prompt, model)
@@ -291,6 +310,10 @@ class KnowledgeGraphManager:
 
             # Boost by observation count (more established = more relevant)
             score += min(attrs.get("observation_count", 1) - 1, 5)
+
+            # Heavily boost developer insights so they are always prioritized
+            if attrs.get("type") == "insight":
+                score += 10
 
             if score > 0:
                 scored_nodes.append((node_id, attrs, score))

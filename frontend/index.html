@@ -869,6 +869,9 @@
                 <div class="spinner"></div>
                 <div class="loading-text">Analyzing your logs…</div>
                 <div class="loading-detail" id="loadingDetail">Sending to local LLM</div>
+                <div id="progressContainer" style="display: none; width: 100%; height: 8px; background: rgba(255, 255, 255, 0.1); border-radius: 4px; margin-top: 12px; overflow: hidden;">
+                    <div id="progressFill" style="width: 0%; height: 100%; background: var(--accent-gradient); transition: width 0.3s ease;"></div>
+                </div>
                 <button class="btn-cancel" id="cancelBtn" style="margin-top: 16px; border: 1px solid rgba(248, 113, 113, 0.4); color: var(--error); background: rgba(248, 113, 113, 0.05); font-weight: 500; font-size: 0.85rem; padding: 8px 16px; display: flex; align-items: center; gap: 8px; transition: var(--transition);" onmouseover="this.style.background='rgba(248, 113, 113, 0.15)'" onmouseout="this.style.background='rgba(248, 113, 113, 0.05)'">
                     🛑 Stop Analysis
                 </button>
@@ -1026,6 +1029,7 @@
         let selectedFiles = []; // Holds list of File objects
         let maxFileSizeMB = 10; // Dynamic default limit, loaded from server
         let analysisAbortController = null;
+        let currentSessionId = null;
         let systemInfoFile = null;
         let currentGraphNodes = [];
 
@@ -1253,6 +1257,9 @@
         // =============================================
         analyzeBtn.addEventListener('click', uploadAndAnalyze);
         cancelBtn.addEventListener('click', () => {
+            if (currentSessionId) {
+                fetch(`/status/${currentSessionId}/cancel`, { method: 'POST' }).catch(console.error);
+            }
             if (analysisAbortController) {
                 analysisAbortController.abort();
             }
@@ -1301,13 +1308,17 @@
             
             return item;
         }
-
         async function uploadAndAnalyze() {
             if (selectedFiles.length === 0) return;
 
             hideError();
             resultsCard.classList.remove('show');
             loadingSection.classList.add('show');
+            
+            // Reset progress bar
+            document.getElementById('progressContainer').style.display = 'none';
+            document.getElementById('progressFill').style.width = '0%';
+            
             analyzeBtn.disabled = true;
             
             const useKg = document.getElementById('useKgCheckbox').checked;
@@ -1348,22 +1359,34 @@
                 }
 
                 const sessionId = uploadData.session_id;
+                currentSessionId = sessionId;
                 
                 // Start polling status
                 let isDone = false;
                 let finalData = null;
                 
+                loadingDetail.textContent = `Processing batch analysis in background...`;
+                
                 while (!isDone) {
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-                    
-                    loadingDetail.textContent = `Processing batch analysis in background...`;
                     
                     const statusResp = await fetch(`/status/${sessionId}`, { signal });
                     const statusData = await statusResp.json();
                     
                     if (!statusResp.ok) {
                         throw new Error(statusData.error || `Status check failed (${statusResp.status})`);
+                    }
+
+                    if (statusData.status === 'PROCESSING' && statusData.verdict) {
+                        if (statusData.verdict.startsWith('PROGRESS:')) {
+                            const pct = parseInt(statusData.verdict.split(':')[1]);
+                            document.getElementById('progressContainer').style.display = 'block';
+                            document.getElementById('progressFill').style.width = pct + '%';
+                            loadingDetail.textContent = `Analyzing context... ${pct}%`;
+                        } else {
+                            loadingDetail.textContent = statusData.verdict;
+                        }
                     }
                     
                     if (statusData.status === 'COMPLETED') {
@@ -1399,6 +1422,7 @@
                 loadingSection.classList.remove('show');
                 analyzeBtn.disabled = false;
                 analysisAbortController = null;
+                currentSessionId = null;
             }
         }
 

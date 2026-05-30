@@ -94,6 +94,17 @@ def get_session_status(session_id: str, db: Session) -> dict[str, Any]:
         "graph_data": session.graph_data,
     }
 
+def cancel_session(session_id: str, db: Session) -> dict[str, Any]:
+    session = repositories.get_session_by_id(db, session_id)
+    if session is None:
+        raise NotFoundError(f"Session {session_id} not found")
+    
+    if session.status in ("PENDING", "PROCESSING"):
+        repositories.update_status(db, session, "CANCELLED")
+        repositories.commit(db)
+        
+    return {"session_id": session.id, "status": "CANCELLED"}
+
 # ------------------------------------------------------------------
 # Knowledge Graph and Models services
 # ------------------------------------------------------------------
