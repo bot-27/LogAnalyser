@@ -6,10 +6,11 @@ Services never import from tasks.
 """
 
 import logging
+import os
 
 from sqlalchemy.orm import Session
 
-from worker import repositories
+from backend.worker import repositories
 
 logger = logging.getLogger("loganalyzer.worker.services")
 
@@ -62,15 +63,16 @@ def _dummy_graphify(text: str) -> dict[str, list[dict[str, str]]]:
 # ------------------------------------------------------------------
 # Core analysis orchestration
 # ------------------------------------------------------------------
+import asyncio
+from backend.app import analyze_logs, get_kg_manager
+
 def run_analysis(session_id: str, db: Session) -> None:
     """
     Full analysis pipeline:
       1. Mark session as PROCESSING  (repository)
       2. Read all linked log files from disk
-      3. Run analysis  (dummy helpers — swap later)
+      3. Run analysis via LangChain/Ollama
       4. Persist results  (repository)
-
-    On failure the session is marked FAILED via the repository layer.
     """
     session = repositories.get_session_by_id(db, session_id)
     if session is None:
@@ -83,17 +85,37 @@ def run_analysis(session_id: str, db: Session) -> None:
         log_files = repositories.get_log_files(db, session_id)
 
         aggregated: list[str] = []
+        filenames: list[str] = []
         for lf in log_files:
             try:
                 with open(lf.file_path, "r", encoding="utf-8", errors="ignore") as fh:
                     aggregated.append(fh.read())
+                    filenames.append(os.path.basename(lf.file_path))
             except OSError as err:
                 logger.warning("Could not read %s: %s", lf.file_path, err)
 
         combined_text = "\n\n--- FILE BOUNDARY ---\n\n".join(aggregated)
+        combined_filename = ", ".join(filenames)
 
-        verdict = _dummy_ollama_analyze(combined_text)
-        graph_data = _dummy_graphify(combined_text)
+        # Retrieve knowledge graph manager (use default for now)
+        kg_manager = get_kg_manager("default")
+
+        # Run async analysis pipeline synchronously in this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            verdict, context_used, msg = loop.run_until_complete(
+                analyze_logs(combined_text, model=None, use_kg=True, system_info=None, kg_manager=kg_manager)
+            )
+            # Update knowledge graph with the insights
+            loop.run_until_complete(
+                kg_manager.add_analysis_entities(verdict, combined_filename, model=None)
+            )
+        finally:
+            loop.close()
+
+        graph_data = kg_manager.get_graph_data()
 
         repositories.save_result(
             db, session, verdict=verdict, graph_data=graph_data

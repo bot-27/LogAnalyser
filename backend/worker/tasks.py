@@ -5,7 +5,7 @@ This is the "routes" equivalent for the worker: it receives messages,
 manages the DB session lifecycle, and delegates to the service layer.
 
 Run from project root:
-    celery -A worker.tasks:celery_app worker --loglevel=info --pool=solo
+    celery -A backend.worker.tasks:celery_app worker --loglevel=info --pool=solo
 """
 
 import logging
@@ -14,8 +14,8 @@ from typing import Any
 
 from celery import Celery
 
-from db.models import SessionLocal
-from worker import services
+from backend.db.models import SessionLocal
+from backend.worker import services
 
 # ------------------------------------------------------------------
 # Logging
@@ -53,7 +53,7 @@ def process_session(self: Any, session_id: str) -> None:
     Entry-point for background analysis.
 
     Manages the DB session lifecycle and delegates all logic to
-    ``worker.services.run_analysis``.
+    ``backend.worker.services.run_analysis``.
     """
     db = SessionLocal()
     try:

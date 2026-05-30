@@ -23,7 +23,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import ChatOllama
 from dotenv import load_dotenv
 
-from knowledge_graph import KnowledgeGraphManager
+from backend.knowledge_graph import KnowledgeGraphManager
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -59,11 +59,24 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Knowledge Graph
 # ---------------------------------------------------------------------------
-kg_manager = KnowledgeGraphManager(
-    storage_dir=KNOWLEDGE_GRAPH_DIR,
-    ollama_base_url=OLLAMA_BASE_URL,
-    default_model=DEFAULT_MODEL,
-)
+kg_managers: dict[str, KnowledgeGraphManager] = {}
+
+def get_kg_manager(service_name: str | None) -> KnowledgeGraphManager:
+    if not service_name:
+        service_name = "default"
+    
+    safe_name = "".join([c for c in service_name if c.isalnum() or c in ('-', '_')])
+    if not safe_name:
+        safe_name = "default"
+        
+    if safe_name not in kg_managers:
+        storage_dir = os.path.join(KNOWLEDGE_GRAPH_DIR, safe_name)
+        kg_managers[safe_name] = KnowledgeGraphManager(
+            storage_dir=storage_dir,
+            ollama_base_url=OLLAMA_BASE_URL,
+            default_model=DEFAULT_MODEL,
+        )
+    return kg_managers[safe_name]
 
 # ---------------------------------------------------------------------------
 # Prompt Template (from the article — SRE role with 4 analysis points)
@@ -74,10 +87,11 @@ You are a senior site reliability engineer.
 {system_section}
 Analyze the following application logs.
 
-1. Identify the main errors or failures.
-2. Explain the likely root cause in simple terms.
-3. Suggest practical next steps to fix or investigate.
-4. Mention any suspicious patterns or repeated issues.
+1. Identify any explicit errors, failures, or exceptions.
+2. Detect non-error anomalies (e.g., memory leaks, CPU overutilization, latency spikes, or resource exhaustion).
+3. Predict potential future issues or cascading failures based on suspicious patterns.
+4. Explain the likely root cause in simple terms.
+5. Suggest practical next steps to fix, optimize, or investigate.
 
 {prior_knowledge}
 
@@ -104,7 +118,7 @@ def split_logs(log_text: str):
 # ---------------------------------------------------------------------------
 # Log Analysis (enhanced with knowledge graph context)
 # ---------------------------------------------------------------------------
-async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = True, system_info: str | None = None):
+async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = True, system_info: str | None = None, kg_manager: KnowledgeGraphManager | None = None):
     """Analyze logs by splitting and processing each chunk, with KG context and optional system info."""
     selected_model = model or DEFAULT_MODEL
 
@@ -115,7 +129,7 @@ async def analyze_logs(log_text: str, model: str | None = None, use_kg: bool = T
     )
 
     # Retrieve relevant context from knowledge graph if enabled
-    if use_kg:
+    if use_kg and kg_manager:
         prior_knowledge = kg_manager.get_relevant_context(log_text)
         context_used = len(prior_knowledge) > 0
     else:
@@ -170,9 +184,10 @@ def preprocess_log_text(log_text: str, max_chars: int = 10000) -> tuple[str, boo
     lines = log_text.splitlines()
     num_lines = len(lines)
     
-    # Compile a fast case-insensitive regex for error-related keywords
+    # Compile a fast case-insensitive regex for error, performance, and resource keywords
     error_pattern = re.compile(
-        r"error|fail|exception|critical|fatal|warn|severe|stacktrace|traceback|caused by",
+        r"error|fail|exception|critical|fatal|warn|severe|stacktrace|traceback|caused by|"
+        r"memory|cpu|leak|timeout|latency|slow|deadlock|oom|out of memory|stuck|blocked|spike|threshold|garbage collection|gc|exhausted",
         re.IGNORECASE
     )
     matched_indices = set()
@@ -226,9 +241,10 @@ async def root():
         return f.read()
 
 
-async def run_kg_update_background(insights: str, filename: str, model: str | None):
+async def run_kg_update_background(insights: str, filename: str, model: str | None, service_name: str | None):
     """Asynchronously update the knowledge graph in the background."""
     try:
+        kg_manager = get_kg_manager(service_name)
         await kg_manager.add_analysis_entities(
             analysis_text=insights,
             filename=filename,
@@ -245,6 +261,7 @@ async def analyze_log_file(
     system_info: UploadFile | None = File(None),
     model: str | None = None,
     use_kg: bool = True,
+    service_name: str | None = None,
 ):
     """Analyze uploaded log file and update knowledge graph."""
     # Validate file extension
@@ -313,7 +330,8 @@ async def analyze_log_file(
         if was_filtered:
             logger.info("Log pre-filtering: %s", filter_status)
 
-        insights, context_used = await analyze_logs(processed_text, model, use_kg, system_info=system_info_text)
+        kg_manager = get_kg_manager(service_name)
+        insights, context_used = await analyze_logs(processed_text, model, use_kg, system_info=system_info_text, kg_manager=kg_manager)
 
         if was_filtered:
             filter_note = (
@@ -337,6 +355,7 @@ async def analyze_log_file(
             insights=insights,
             filename=filename,
             model=model,
+            service_name=service_name,
         )
 
         return {
@@ -360,14 +379,16 @@ async def analyze_log_file(
 # Knowledge Graph API Endpoints
 # ---------------------------------------------------------------------------
 @app.get("/knowledge-graph")
-async def get_knowledge_graph_summary():
+async def get_knowledge_graph_summary(service_name: str | None = None):
     """Get knowledge graph summary and statistics."""
+    kg_manager = get_kg_manager(service_name)
     return kg_manager.get_graph_summary()
 
 
 @app.get("/knowledge-graph/data")
-async def get_knowledge_graph_data():
+async def get_knowledge_graph_data(service_name: str | None = None):
     """Get full graph data for visualization."""
+    kg_manager = get_kg_manager(service_name)
     return kg_manager.get_graph_data()
 
 
@@ -378,7 +399,9 @@ async def restructure_knowledge_graph(
     """Restructure the knowledge graph with optional instructions."""
     instructions = body.get("instructions", "Auto-restructure: merge duplicates and clean up.")
     model = body.get("model")
+    service_name = body.get("service_name")
     try:
+        kg_manager = get_kg_manager(service_name)
         result = await kg_manager.restructure(instructions=instructions, model=model)
         return result
     except Exception as e:
@@ -402,7 +425,9 @@ async def add_insight(
         )
 
     related = body.get("related_entities", [])
+    service_name = body.get("service_name")
     try:
+        kg_manager = get_kg_manager(service_name)
         result = await kg_manager.add_developer_insight(
             insight_text=insight_text,
             related_entities=related,
@@ -422,7 +447,9 @@ async def explain_knowledge_graph(
 ):
     """Generate an AI SRE explanation of the knowledge graph contents."""
     model = body.get("model")
+    service_name = body.get("service_name")
     try:
+        kg_manager = get_kg_manager(service_name)
         # Format the graph data into a text description
         graph_data = kg_manager.get_graph_data()
         nodes = graph_data.get("nodes", [])
@@ -473,8 +500,9 @@ async def explain_knowledge_graph(
 
 
 @app.delete("/knowledge-graph")
-async def clear_knowledge_graph():
+async def clear_knowledge_graph(service_name: str | None = None):
     """Clear the knowledge graph (creates backup first)."""
+    kg_manager = get_kg_manager(service_name)
     return kg_manager.clear()
 
 
@@ -527,6 +555,7 @@ async def health_check():
     except Exception:
         pass
 
+    kg_manager = get_kg_manager(None)
     kg_summary = kg_manager.get_graph_summary()
 
     return {
